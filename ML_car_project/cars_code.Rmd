@@ -1,0 +1,1471 @@
+---
+title: "stat432_final"
+author: "Elizabeth Binkina"
+date: "11/25/2024"
+output: pdf_document
+---
+
+```{r}
+df_orginal = read.csv("used_cars.csv")
+#View(df_orginal)
+```
+
+DATA PREPROCESSING
+
+```{r}
+df_cars = df_orginal
+
+#removing NA values
+df_cars <- na.omit(df_cars)
+
+# converting model year to age of car
+df_cars$car_age <- df_orginal$model_year - 2025
+df_cars$car_age = df_cars$car_age*(-1)
+
+#milage converted to numeric 
+df_cars$milage <- as.numeric(gsub(",", "", gsub(" mi\\.", "", df_cars$milage)))
+
+#View(df_cars)
+```
+
+```{r}
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(tidyverse)
+
+# Splitting the engine column into Horsepower, Displacement, Engine_Type, Fuel_Type
+df_cars <- df_cars %>%
+  mutate(
+    # Extract Horsepower, e.g., "300.0HP"
+    Horsepower = str_extract(engine, "\\d+\\.\\d+HP"),
+    
+    # Extract Displacement, e.g., "3.7L" or "3.7 Liter"
+    Displacement = str_extract(engine, "\\d+\\.\\d+L|\\d+\\.\\d+ Liter"),
+    
+    # Extract Engine Type, e.g., "V6", "I4", "Straight 6"
+    Engine_Type = str_extract(engine, "V\\d+|I\\d+|Straight \\d+|\\d+ Cylinder"),
+    
+    # Extract Fuel Type, e.g., "Gasoline Fuel", "Flex Fuel Capability"
+    Fuel_Type = str_extract(engine, "Gasoline Fuel|Flex Fuel Capability|Electric Fuel System|Gas/Electric Hybrid"),
+    
+    # Extract number of Cylinders, e.g., "V6", "I4"
+    Cylinders = str_extract(engine, "\\d+(?= Cylinder|V\\d+| Straight \\d+)"),
+    
+    # Remove unnecessary information left in the engine column
+    Additional_Info = str_remove_all(engine, ".*(HP|L|Liter|V\\d+|I\\d+|Cylinder|Fuel).*")
+  )
+
+# Cleaning up extracted data
+df_cars <- df_cars %>%
+  mutate(
+    # Remove "HP" from Horsepower
+    Horsepower = str_remove(Horsepower, "HP"),
+    
+    # Replace " Liter" with "L" in Displacement
+    Displacement = str_replace(Displacement, " Liter", "L"),
+    
+    # Trim extra spaces in Engine_Type
+    Engine_Type = str_trim(Engine_Type),
+    
+    # Trim extra spaces in Additional_Info
+    Additional_Info = str_trim(Additional_Info)
+  )
+
+df_cars$Horsepower <- as.numeric(df_cars$Horsepower)
+
+```
+
+```{r}
+library(dplyr)
+
+df_cars <- df_cars %>%
+  mutate(
+    Cylinders = case_when(
+      str_detect(Engine_Type, "I4") ~ "4",         # If Engine_Type contains "I4", set Cylinders to "4"
+      str_detect(Engine_Type, "I3") ~ "3",
+      str_detect(Engine_Type, "I6") ~ "6",
+      str_detect(Engine_Type, "V6") ~ "6",         # If Engine_Type contains "V6", set Cylinders to "6"
+      str_detect(Engine_Type, "V8") ~ "8",         # If Engine_Type contains "V8", set Cylinders to "8"
+      str_detect(Engine_Type, "V10") ~ "10",
+      str_detect(Engine_Type, "V12") ~ "12",
+      TRUE ~ Cylinders                             # Keep the original value if none of the conditions match
+    )
+  )
+
+library(dplyr)
+
+df_cars <- df_cars %>%
+  mutate(
+    Engine_Type = case_when(
+      str_detect(engine, "Electric Motor") ~ "electric",   # If "Electric" is in the engine column, set Engine_Type to "electric"
+      TRUE ~ Engine_Type                           # Keep the existing Engine_Type value for other entries
+    )
+  )
+
+
+#View(df_cars)
+```
+
+```{r}
+library(stringr)
+
+df_cars <- df_cars %>%
+  mutate(
+    Displacement = str_remove(Displacement, "L") # Remove the "L" from the Displacement column
+  )
+
+df_cars <- df_cars %>%
+  mutate(
+    price = str_remove_all(price, "\\$|,") %>%  # Remove both dollar sign and commas
+           as.numeric()                        # Convert to numeric
+  )
+
+df_cars <- na.omit(df_cars)
+
+
+df_cars <- df_cars %>%
+  select(-Fuel_Type, -Additional_Info, -engine,-Engine_Type,-clean_title) 
+
+```
+
+
+```{r}
+df_cars <- df_cars %>%
+  mutate(
+    Accident_Label = case_when(
+      accident == "At least 1 accident or damage reported" ~ 1,  # Label as 1
+      accident == "None reported" ~ 0,                          # Label as 0
+      TRUE ~ NA_real_                                            # Leave empty ones as NA
+    )
+  )
+
+#df_cars$clean_Title <- ifelse(df_cars$clean_title == "Yes", 1, 0)
+
+
+df_cars <- df_cars %>%
+  select(-accident) 
+
+
+df_cars <- na.omit(df_cars)
+```
+
+```{r}
+# omitting severe outliers 
+
+# Calculate the IQR for the 'price' column
+Q1 <- quantile(df_cars$price, 0.25, na.rm = TRUE)
+Q3 <- quantile(df_cars$price, 0.75, na.rm = TRUE)
+IQR <- Q3 - Q1
+
+# Define the lower and upper bounds for outliers
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+df_cars <- df_cars[df_cars$price >= lower_bound & df_cars$price <= upper_bound, ]
+View(df_cars)
+```
+
+
+```{r}
+# Calculate the IQR for the 'milage' column
+Q1 <- quantile(df_cars$milage, 0.25, na.rm = TRUE)
+Q3 <- quantile(df_cars$milage, 0.75, na.rm = TRUE)
+IQR <- Q3 - Q1
+
+# Define the lower and upper bounds for outliers
+lower_bound <- Q1 - 1.5 * IQR
+upper_bound <- Q3 + 1.5 * IQR
+
+df_cars <- df_cars[df_cars$milage >= lower_bound & df_cars$milage <= upper_bound, ]
+View(df_cars)
+
+```
+
+```{r}
+df_cars <- df_cars[df_cars$Horsepower != "NA", ]
+df_cars <- df_cars[df_cars$Cylinders != "NA", ]
+df_cars
+```
+
+```{r}
+# Column classes
+column_classes <- sapply(df_cars, class)
+print(column_classes)
+
+# Column types
+column_types <- sapply(df_cars, typeof)
+print(column_types)
+```
+
+```{r}
+df_cars$Displacement <- as.numeric(df_cars$Displacement)
+df_cars$Cylinders <- as.numeric(df_cars$Cylinders)
+df_cars$Accident_Label <- as.numeric(df_cars$Accident_Label)
+```
+
+```{r}
+summary(df_cars)
+```
+
+```{r}
+df_cars <- na.omit(df_cars)
+```
+
+
+DATA VISUALIZATIONS
+__________________________________________________________________________________________________________
+
+
+```{r}
+# Scatterplot: Horsepower vs. Mileage
+ggplot(df_cars, aes(x = Horsepower, y = price)) +
+  geom_point(alpha = 0.6, color = "red") +
+  labs(
+    title = "Scatterplot of Horsepower vs. Price",
+    x = "Horsepower",
+    y = "price"
+  ) +
+  theme_minimal()
+
+
+```
+
+```{r}
+ggplot(df_cars, aes(x = milage, y = price)) +
+  geom_point(alpha = 0.6, color = "blue") +
+  labs(title = "Scatterplot of Mileage vs. Price", x = "Mileage (mi)", y = "Price ($)") +
+  theme_minimal()
+
+```
+
+```{r}
+# Ensure 'accident' is a categorical variable
+df_cars$Accident_Label <- as.factor(df_cars$Accident_Label)
+
+ggplot(df_cars, aes(x = model_year, y = price, color = Accident_Label)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Scatterplot of Model Year vs. Price (Color-Coded by Accident Status)",
+    x = "Model Year",
+    y = "Price ($)",
+    color = "Accident Status"
+  ) +
+  theme_minimal()
+
+
+```
+
+```{r}
+# Summary statistics for numeric variables
+numeric_summary <- df_cars %>%
+  summarise(
+    Milage_Mean = mean(milage, na.rm = TRUE),
+    Price_Mean = mean(price, na.rm = TRUE),
+    Car_Age_Mean = mean(car_age, na.rm = TRUE),
+    Horsepower_Average = mean(Horsepower, na.rm = TRUE)
+  )
+
+print(numeric_summary)
+```
+
+```{r}
+common_brands_avg_price <- df_cars %>%
+  group_by(brand) %>%
+  summarise(
+    Count = n(),
+    Avg_Price = mean(price, na.rm = TRUE)
+  ) %>%
+  arrange(desc(Count)) %>%
+  head(15)  # Top 15 most common brands
+
+print(common_brands_avg_price)
+```
+
+```{r}
+# Top 10 Brands
+df_cars %>%
+  count(brand, sort = TRUE) %>%
+  top_n(15) %>%
+  ggplot(aes(x = reorder(brand, n), y = n)) +
+  geom_bar(stat = "identity", fill = "darkred", alpha = 0.8) +
+  labs(title = "Top 10 Brands", x = "Brand", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(readr)
+
+# Model Year Distribution
+ggplot(df_cars, aes(x = model_year)) +
+  geom_histogram(binwidth = 1, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Model Year Distribution", x = "Model Year", y = "Frequency") +
+  theme_minimal()
+
+```
+
+```{r}
+# Mileage Distribution
+ggplot(df_cars, aes(x = milage)) +
+  geom_histogram(binwidth = 5000, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Mileage Distribution", x = "Mileage (mi)", y = "Frequency") +
+  theme_minimal()
+
+```
+
+```{r}
+# Price Distribution
+ggplot(df_cars, aes(x = price)) +
+  geom_histogram(binwidth = 5000, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Price Distribution", x = "Price ($)", y = "Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Fuel Type Distribution
+df_cars %>%
+  count(fuel_type, sort = TRUE) %>%
+  ggplot(aes(x = reorder(fuel_type, n), y = n)) +
+  geom_bar(stat = "identity", fill = "darkred", alpha = 0.8) +
+  labs(title = "Fuel Type Distribution", x = "Fuel Type", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+```
+```{r}
+# Fuel Type Distribution
+df_cars %>%
+  count(ext_col, sort = TRUE) %>%
+  ggplot(aes(x = reorder(ext_col, n), y = n)) +
+  geom_bar(stat = "identity", fill = "darkblue", alpha = 0.8) +
+  labs(title = "Exterior Color Distribution", x = "Color", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+```
+```{r}
+# Fuel Type Distribution
+df_cars %>%
+  count(int_col, sort = TRUE) %>%
+  ggplot(aes(x = reorder(int_col, n), y = n)) +
+  geom_bar(stat = "identity", fill = "darkblue", alpha = 0.8) +
+  labs(title = "Interior Color Distribution", x = "Color", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+```
+
+```{r}
+# Accident History
+df_cars %>%
+  count(Accident_Label, sort = TRUE) %>%
+  ggplot(aes(x = reorder(Accident_Label, n), y = n)) +
+  geom_bar(stat = "identity", fill = "darkred", alpha = 0.8) +
+  labs(title = "Accident History", x = "Accident History", y = "Frequency") +
+  coord_flip() +
+  theme_minimal()
+```
+```{r}
+#install.packages("GGally")
+library(GGally)
+
+numeric_cars_df <- df_cars%>% select(model_year, milage,price,car_age, Horsepower,Cylinders)
+ggpairs(numeric_cars_df)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+UNSUPERVISED LEARNING
+__________________________________________________________________________________________________________
+
+
+```{r}
+#Creating total numeric dataframe 
+
+#encoding the categorical variables in the dataset into numeric 
+
+categorical_cars_df <- df_cars[, c("brand", "fuel_type", "transmission", "ext_col", "int_col")]
+
+numeric_cars_df <- df_cars[, c("model_year", "milage", "price", "car_age","Horsepower","Displacement","Cylinders","Accident_Label" )]
+
+
+encoded_columns <- list()
+
+for (col in colnames(categorical_cars_df)) {
+  print(paste("Encoding column:", col))
+
+  encoded_columns[[col]] <- as.numeric(factor(categorical_cars_df[[col]]))
+}
+
+encoded_cars_df <- as.data.frame(encoded_columns)
+#View(encoded_cars_df)
+#View(numeric_cars_df)
+
+df_cars_numeric <- cbind(encoded_cars_df,numeric_cars_df)
+View(df_cars_numeric)
+```
+
+```{r}
+library(cluster)
+df_scaled <- scale(df_cars[sapply(df_cars, is.numeric)])
+View(df_scaled)
+
+#df_categorical <- df_cars[sapply(df_cars, is.factor)]
+
+#determining optimal number of clusters
+library(factoextra)
+fviz_nbclust(df_scaled, pam, method = "silhouette")
+```
+
+
+K-Mediods
+
+```{r}
+set.seed(10)
+kmedoids_result <- pam(df_scaled, k = 3)  
+
+# Visualize the clusters
+fviz_cluster(kmedoids_result, geom = "point", data = df_scaled)
+
+```
+
+```{r}
+View(aggregate(df_scaled, by = list(kmedoids_result$clustering), FUN = mean))
+```
+
+```{r}
+df_cars$kmediods_cluster_assignemnt <- factor(kmedoids_result$clustering)
+#View(df_cars)
+```
+
+
+
+```{r}
+df_cars$Accident_Label <- as.factor(df_cars$Accident_Label)
+
+ggplot(df_cars, aes(x = car_age, y = price, color = kmediods_cluster_assignemnt)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Scatterplot of Age vs Price",
+    x = "Car_Age",
+    y = "Price",
+    color = "Cluster Assignnment"
+  ) +
+  theme_minimal()
+```
+```{r}
+ggplot(df_cars, aes(x = Horsepower, y = price, color = kmediods_cluster_assignemnt)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Horsepower vs Price",
+    x = "Horsepower",
+    y = "Price",
+    color = "Cluster Assignnment"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+ggplot(df_cars, aes(x = milage, y = price, color = kmediods_cluster_assignemnt)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Milage vs Price",
+    x = "Milage",
+    y = "Price",
+    color = "Cluster Assignnment"
+  ) +
+  theme_minimal()
+```
+
+
+COMPLETE LINKAGE CLUSTERING 
+
+```{r}
+# Load required libraries
+library(dplyr)
+
+numeric_data <- df_cars %>%
+  select(model_year, milage, price, car_age, Horsepower, Displacement, Cylinders)
+
+scaled_data <- scale(numeric_data)
+distance_matrix <- dist(scaled_data, method = "euclidean")
+hc_complete <- hclust(distance_matrix, method = "complete")
+
+plot(hc_complete, main = "Dendrogram - Complete Linkage", xlab = "", sub = "", cex = 0.6)
+
+k <- 5
+clusters <- cutree(hc_complete, k)
+
+df_cars <- df_cars %>%
+  mutate(hier_clusters = clusters)
+
+head(df_cars)
+
+```
+
+```{r}
+complete_link_model <- car_data %>% group_by(cluster) %>% summarise(across(where(is.numeric), mean))
+
+#View(complete_link_model)
+```
+
+Cluster 1:
+Newer cars (2016.698), moderate mileage, moderately priced, low accident rates.
+Cluster 2:
+Relatively newer cars (2017.925), low mileage, lower price, lower horsepower.
+Cluster 3:
+Older cars (2009.595) with high mileage, low prices, and slightly higher accident rates.
+Cluster 4:
+High-performance, newer cars (2015.431) with low mileage, high prices, and high horsepower.
+Cluster 5:
+Oldest cars (2004.770), high mileage, lower prices, larger engines, and higher accident rates.
+
+
+```{r}
+df_cars$hier_clusters <- as.factor(df_cars$hier_clusters)
+
+ggplot(df_cars, aes(x = car_age, y = price, color = hier_clusters)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Scatterplot of Age vs Price with Complete Linkage Agg Clustering",
+    x = "Car_Age",
+    y = "Price",
+    color = "Cluster Assignnment"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+df_cars$hier_clusters <- as.factor(df_cars$hier_clusters)
+
+ggplot(df_cars, aes(x = Horsepower, y = price, color = hier_clusters)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Scatterplot of Horsepower vs Price with Complete Linkage Agg Clustering",
+    x = "Horsepower",
+    y = "Price",
+    color = "Cluster Assignnment"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+df_cars$hier_clusters <- as.factor(df_cars$hier_clusters)
+
+ggplot(df_cars, aes(x = milage, y = price, color = hier_clusters)) +
+  geom_point(alpha = 0.6) +
+  labs(
+    title = "Scatterplot of Milage vs Price with Complete Linkage Agg Clustering",
+    x = "Milage",
+    y = "Price",
+    color = "Cluster Assignnment"
+  ) +
+  theme_minimal()
+```
+
+UMAP Clustering
+
+```{r}
+install.packages("umap")
+
+library(umap)
+library(dplyr)
+library(ggplot2)
+
+```
+
+```{r}
+head(df_cars_numeric)
+```
+
+```{r}
+df_cars_numeric$brand <- as.numeric(factor(df_cars_numeric$brand))
+df_cars_numeric$fuel_type <- as.numeric(factor(df_cars_numeric$fuel_type))
+df_cars_numeric$transmission <- as.numeric(factor(df_cars_numeric$transmission))
+df_cars_numeric$ext_col <- as.numeric(factor(df_cars_numeric$ext_col))
+df_cars_numeric$int_col <- as.numeric(factor(df_cars_numeric$int_col))
+df_cars_numeric$Accident_Label <- as.numeric(factor(df_cars_numeric$Accident_Label))
+
+umap_result <- umap(df_cars_numeric)
+
+umap_result
+```
+
+```{r}
+umap_data <- data.frame(umap_result$layout)
+colnames(umap_data) <- c("UMAP1", "UMAP2")
+head(umap_data)
+```
+
+```{r}
+# Extract the layout (coordinates of the 2D UMAP projection)
+umap_data <- data.frame(umap_result$layout)
+colnames(umap_data) <- c("UMAP1", "UMAP2")
+
+# If you have clustering labels, add them to the plot (e.g., k-means clusters)
+umap_data$cluster <- as.factor(df_cars$kmediods_cluster_assignemnt)
+
+# Plot the UMAP result
+library(ggplot2)
+
+ggplot(umap_data, aes(x = UMAP1, y = UMAP2)) +
+  geom_point(aes(color = cluster), alpha = 0.6) + # Use `cluster` for color
+  labs(title = "UMAP Clustering of Cars Dataset",
+       x = "UMAP Dimension 1", 
+       y = "UMAP Dimension 2") +
+  scale_color_manual(values = rainbow(length(unique(umap_data$cluster)))) + 
+  theme_minimal()
+
+
+```
+
+```{r}
+umap.defaults
+```
+
+```{r}
+myumap.tuning = umap.defaults
+  umap.defaults$n_neighbors = 12
+  
+  umap_data = umap(df_cars_numeric, umap.defaults)
+
+  plot(umap_data$layout)
+```
+3. LCA
+
+```{r}
+install.packages("poLCA")
+library(poLCA)
+
+head(df_cars)
+
+colnames(df_cars)
+```
+
+```{r}
+library(poLCA)
+
+# Directly subset the dataset to select the relevant columns
+df_cars_clean <- df_cars[, c("milage", "Horsepower", "car_age", "price", "fuel_type", "transmission", "Accident_Label")]
+
+# Discretize continuous variables into 5 bins
+df_cars_clean$milage <- as.factor(cut(df_cars_clean$milage, breaks = 5))
+df_cars_clean$Horsepower <- as.factor(cut(df_cars_clean$Horsepower, breaks = 5))
+df_cars_clean$car_age <- as.factor(cut(df_cars_clean$car_age, breaks = 5))
+df_cars_clean$price <- as.factor(cut(df_cars_clean$price, breaks = 5))
+
+# Convert categorical variables into factors
+df_cars_clean$fuel_type <- as.factor(df_cars_clean$fuel_type)
+df_cars_clean$transmission <- as.factor(df_cars_clean$transmission)
+df_cars_clean$Accident_Label <- as.factor(df_cars_clean$Accident_Label)
+
+# Check the structure of the cleaned data
+str(df_cars_clean)
+
+```
+
+
+```{r}
+# Step 2: Fit LCA models for different numbers of latent classes (K)
+bic_values <- numeric(10)  # Store BIC values for K=1 to K=10
+
+for (K in 1:10) {
+  lca_model <- poLCA(cbind(milage, Horsepower, car_age, price, fuel_type, transmission, Accident_Label) ~ 1, 
+                     data = df_cars_clean, nclass = K)
+  bic_values[K] <- lca_model$bic
+}
+
+```
+
+```{r}
+# Step 3: Find the optimal number of latent classes (K)
+optimal_K <- which.min(bic_values)  # Select K with lowest BIC
+cat("Optimal number of latent classes:", optimal_K, "\n")
+```
+
+```{r}
+# Step 4: Fit the final LCA model with the optimal number of classes
+final_lca_model <- poLCA(cbind(milage, Horsepower, car_age, price, fuel_type, transmission, Accident_Label) ~ 1, 
+                         data = df_cars_clean, nclass = optimal_K)
+
+# View the results of the final LCA model
+summary(final_lca_model)
+
+# Assign cluster labels to the data
+df_cars_clean$cluster_assignment <- final_lca_model$predclass
+
+View(df_cars_clean)
+```
+
+```{r}
+# Plot the BIC values for different numbers of latent classes (K)
+plot(1:10, bic_values, type = "b", xlab = "Number of Clusters (K)", ylab = "BIC", 
+     main = "BIC vs Number of Clusters", pch = 16, col = "blue")
+
+```
+
+```{r}
+# Check cluster assignments
+table(df_cars_clean$cluster_assignment)
+
+# Examine the profile of each cluster by summarizing the variables
+cluster_summary <- df_cars_clean %>%
+  group_by(cluster_assignment) %>%
+  summarise(across(c(milage, Horsepower, car_age, price, fuel_type, transmission, Accident_Label), 
+                  ~ paste(unique(.), collapse = ", ")))
+
+print(cluster_summary)
+
+```
+
+```{r}
+# Compare the average price across clusters
+cluster_price_comparison <- df_cars_clean %>%
+  group_by(cluster_assignment) %>%
+  summarise(avg_price = mean(price))
+
+print(cluster_price_comparison)
+
+```
+
+```{r}
+# Check the association between clusters and Accident_Label
+table(df_cars_clean$cluster_assignment, df_cars_clean$Accident_Label)
+
+```
+
+```{r}
+# Subset numeric columns manually
+df_numeric <- df_cars_clean[, c("milage", "Horsepower", "car_age", "price")]
+
+# Ensure all columns are numeric
+df_numeric <- data.frame(lapply(df_numeric, as.numeric))
+
+# Perform PCA for dimensionality reduction
+pca_result <- prcomp(df_numeric, scale. = TRUE)
+
+# Create a data frame with PCA results and cluster assignments
+pca_df <- data.frame(pca_result$x, cluster = as.factor(df_cars_clean$cluster_assignment))
+
+# Plot the first two principal components
+library(ggplot2)
+ggplot(pca_df, aes(PC1, PC2, color = cluster)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Clustering Results LCA", x = "Principal Component 1", y = "Principal Component 2") +
+  scale_color_manual(values = rainbow(length(unique(pca_df$cluster)))) +
+  theme_minimal()
+
+
+```
+
+```{r}
+library(ggplot2)
+
+# Create scatterplot for 'milage' vs 'Horsepower' with clusters color-coded
+ggplot(df_cars_clean, aes(x = milage, y = price, color = as.factor(cluster_assignment))) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Scatterplot of Mileage vs price by Cluster",
+       x = "Mileage",
+       y = "Horsepower",
+       color = "Cluster") +
+  theme_minimal()
+
+```
+
+```{r}
+# Create scatterplot for 'car_age' vs 'price' with clusters color-coded
+ggplot(df_cars_clean, aes(x = car_age, y = price, color = as.factor(cluster_assignment))) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Scatterplot of Car Age vs Price by Cluster",
+       x = "Car Age",
+       y = "Price",
+       color = "Cluster") +
+  theme_minimal()
+
+```
+
+```{r}
+library(viridis)
+# Create scatterplot for 'milage' vs 'price' with clusters color-coded
+ggplot(df_cars_clean, aes(x = Horsepower, y = price, color = as.factor(cluster_assignment))) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Scatterplot of Horsepower vs Price by Cluster",
+       x = "Mileage",
+       y = "Price",
+       color = "Cluster") +
+  theme_minimal() + scale_color_viridis(discrete = TRUE)
+
+```
+
+
+PREDICTION MODELS 
+____________________________________________________________________________________________________________________________
+
+1. Ordinary Least Squares Regression 
+
+```{r}
+regression_model <- glm(price ~ brand + fuel_type + transmission + ext_col + int_col +  car_age + milage + Horsepower + Displacement + Cylinders + Accident_Label, data = df_cars_numeric)
+summary(model)
+```
+
+```{r}
+final_regression_model <- glm(price ~ brand + fuel_type + transmission + int_col + car_age + milage + Horsepower + Accident_Label, data = df_cars_numeric)
+summary(final_regression_model)
+```
+```{r}
+stepwise_model <- step(final_regression_model, direction = "both")
+summary(stepwise_model)
+```
+perform cross-validation to estimate the model's generalization performance. 
+
+```{r}
+library(caret)
+# Define the train control for cross-validation
+train_control <- trainControl(method = "cv", number = 10)
+
+# Train a linear model using cross-validation
+cv_model <- train(price ~ brand + fuel_type + transmission + int_col + car_age + milage + Horsepower + Accident_Label, 
+                  data = df_cars_numeric, 
+                  method = "lm", 
+                  trControl = train_control)
+
+print(cv_model)
+```
+
+```{r}
+# Predict using the final model
+predictions <- predict(final_regression_model, newdata = df_cars_numeric)
+
+# Calculate RMSE
+rmse <- sqrt(mean((predictions - df_cars_numeric$price)^2))
+print(paste("RMSE:", rmse))
+
+# R-squared
+ss_total <- sum((df_cars_numeric$price - mean(df_cars_numeric$price))^2)
+ss_residual <- sum((df_cars_numeric$price - predictions)^2)
+r_squared <- 1 - (ss_residual / ss_total)
+print(paste("R-squared:", r_squared))
+```
+
+```{r}
+residuals <- residuals(final_regression_model)
+plot(residuals)
+abline(h = 0, col = "red")
+```
+
+Tunning Process :
+
+Initial Model: Fit an OLS regression model with all possible predictors.
+Refinement: Remove irrelevant or redundant predictors to simplify the model.
+Stepwise Selection: Use stepwise regression to automatically select the most relevant predictors based on AIC.
+Cross-Validation: Perform 10-fold cross-validation using the caret package to assess the model's generalization performance.
+Model Evaluation: Calculate RMSE and R-squared on the training data to assess model fit and accuracy.
+Residual Diagnostics: Plot residuals to check for any patterns that suggest issues with the model.
+
+
+2.Regression Tree
+
+```{r}
+library(ISLR)
+set.seed(10)
+n_rows <- dim(df_cars_numeric)[1]
+
+train_percentage <- 0.75
+train_size <- floor(train_percentage*n_rows)
+train_indicies <- sample(x = 1:n_rows, size = train_size)
+
+train_Cars <- df_cars_numeric[train_indicies,]
+test_Cars <- df_cars_numeric[-train_indicies,]
+```
+
+```{r}
+library(rpart)
+train_cars_regression_tree <- rpart(formula = price ~ brand + fuel_type + transmission + int_col + car_age + milage + Horsepower + Accident_Label, data = train_Cars)
+
+library(rpart.plot)
+options(scipen = 999) 
+prp(train_cars_regression_tree,digits = 6)
+```
+
+Millage is the most important factor in determining price for a used car. Cars with lower mileage tend to have higher prices on average. 
+horsepower is the second most important, as for both high and low mileage groups horsepower plays a key role in predicting prices. 
+Cars with higher horsepower tend to be more expensive, but at a certain level, other factors like age come in to play. 
+In the group where cars have mileage higher than 62,000 the price is split further based on car age. Cars older than 12 years are the least expensive as they are predicted to be about 11,000. For older cars with high mileage, age is a significant determinant of their price. 
+Cars with extremely low mileage and high horsepower fall into a premium price range.
+A combination of low mileage, very high horsepower, and relatively new car age likely correlates with luxury or premium car categories. 
+For budget buyers, older cars with higher mileage represent the best value. 
+Buyers: If you're looking for a good deal, focus on older cars with high mileage but moderate horsepower.
+Sellers: To command higher prices, focus on maintaining lower mileage and advertising horsepower if applicable.
+Dealers : Segment cars into groups based on mileage and horsepower for pricing, as these attributes drive the most price variance.
+
+
+```{r}
+library(caret)
+set.seed(10)
+
+# Define the control method (10-fold cross-validation)
+train_control <- trainControl(method = "cv", number = 10)
+
+# Define the grid for the complexity parameter (cp)
+tune_grid <- expand.grid(.cp = seq(0.001, 0.1, by = 0.001))  # Only cp is needed
+
+# Train the regression tree using caret with cross-validation
+train_model <- train(
+  price ~ brand + fuel_type + transmission + int_col + car_age + milage + Horsepower + Accident_Label,
+  data = train_Cars,
+  method = "rpart",
+  trControl = train_control,
+  tuneGrid = tune_grid
+)
+
+# Print the best tuning parameter (cp)
+print(train_model$bestTune)
+
+# Plot the results of cross-validation
+plot(train_model)
+
+```
+
+```{r}
+test_predictions <- predict(train_model, newdata = test_Cars)
+
+# Calculate RMSE on the test set
+RMSE <- sqrt(mean((test_Cars$price - test_predictions)^2))
+print(paste("Test RMSE: ", RMSE))
+
+# Plot actual vs predicted values
+plot(test_Cars$price, test_predictions, main = "Actual vs Predicted", xlab = "Actual", ylab = "Predicted")
+abline(0, 1, col = "red")
+```
+
+```{r}
+tune_results <- data.frame(cp = numeric(), RMSE = numeric())
+
+cp_values <- seq(0.001, 0.1, by = 0.001)
+
+for (cp_val in cp_values) {
+  model <- rpart(price ~ brand + fuel_type + transmission + int_col + car_age + milage + Horsepower + Accident_Label,
+                 data = train_Cars, cp = cp_val)
+  predictions <- predict(model, newdata = test_Cars)
+  RMSE <- sqrt(mean((test_Cars$price - predictions)^2))
+  tune_results <- rbind(tune_results, data.frame(cp = cp_val, RMSE = RMSE))
+}
+
+# Find the best cp
+best_cp <- tune_results[which.min(tune_results$RMSE), ]
+print(best_cp)
+```
+
+```{r}
+# Extract the best cp value from the tuned model
+best_cp <- train_model$bestTune$cp
+
+# Refit the regression tree using the best cp value
+final_model <- rpart(
+  price ~ brand + fuel_type + transmission + int_col + car_age + milage + Horsepower + Accident_Label,
+  data = train_Cars,
+  cp = best_cp  # Use the best cp value
+)
+
+# Visualize the final model
+library(rpart.plot)
+prp(final_model, digits = 4)
+png("regression_tree_plot.png", width = 2000, height = 1500)
+prp(final_model, digits = 6, cex = 1.5)
+dev.off()  
+
+#THIS TREE WAS SAVED AS A PNG IN THE FOLDER
+
+```
+
+```{r}
+# Make predictions on the test set using the final model
+test_predictions <- predict(final_model, newdata = test_Cars)
+
+# Calculate RMSE on the test set
+RMSE <- sqrt(mean((test_Cars$price - test_predictions)^2))
+print(paste("Test RMSE: ", RMSE))
+
+# Plot actual vs predicted values
+plot(test_Cars$price, test_predictions, main = "Actual vs Predicted", xlab = "Actual", ylab = "Predicted")
+abline(0, 1, col = "red")
+```
+
+
+```{r}
+predictions_tree <- predict(final_model, newdata = test_Cars)
+ss_total <- sum((test_Cars$price - mean(test_Cars$price))^2)  # Total sum of squares
+ss_residual <- sum((test_Cars$price - predictions_tree)^2)  # Residual sum of squares
+r_squared_tree <- 1 - (ss_residual / ss_total)
+
+# Print R-squared value
+print(paste("R-squared (Regression Tree):", r_squared_tree))
+```
+
+
+Tunning Process: 
+
+Cross-validation was used to assess model performance and avoid overfitting.
+cp (complexity parameter) was the key tuning parameter for controlling the size of the tree.
+10-fold cross-validation was used to test different cp values.
+The best cp was selected based on the lowest cross-validation error.
+The model was refitted using the optimal cp value to ensure the tree is properly pruned and balanced.
+Evaluation on the test set and visualizations were performed to assess model performance.
+
+
+3. Random Forest 
+
+```{r}
+set.seed(10)
+library(randomForest)
+
+n_train <- 200
+n_test <- 300
+p <- 8 # number of predictors in the model
+
+# Simulating training and testing data
+X_train <- matrix(rnorm(p * n_train), nrow = n_train)
+X_test <- matrix(rnorm(p * n_test), nrow = n_test)
+
+
+linkfun <- function(x) {
+  true_Y_expectation <- 16392.264913 + 
+                        115.4 * x[, 1] + # brand
+                        2161.603637 * x[, 2] - # fuel_type
+                        204.259292 * x[, 3] + # transmission
+                        185.400721 * x[, 4] - # int_col
+                        864.919259 * x[, 5] - # car_age
+                        0.143303 * x[, 6] + # mileage
+                        88.495329 * x[, 7] - # Horsepower
+                        1841.299810 * x[, 8]   # Accident_Label
+  return (true_Y_expectation)
+  
+}
+
+
+Y_train <- linkfun(X_train) + rnorm(n_train)
+Y_test <- linkfun(X_test) + rnorm(n_test)
+
+
+rf <- randomForest(X_train, Y_train)
+
+mse <- mean((Y_test - predict(rf, X_test))^2)
+print(paste0("MSE on test set: ", round(mse, digits = 3)))
+      
+```
+```{r}
+nsim <- 100
+allnodesize <- c(2, 5, 10, 15, 20, 30)
+
+# storage for mse values
+all_mse <- matrix(NA, nrow = nsim, ncol = length(allnodesize))
+rownames(all_mse) <- paste0("Sim_", 1:nsim)
+colnames(all_mse) <- paste0("Node_Size_", allnodesize)
+
+# loop through each simulation
+for (i in 1:nsim) {
+  # loop through each node size
+  for (j in 1:length(allnodesize)) {
+    # simulate X
+    X_train <- matrix(rnorm(p * n_train), nrow = n_train)
+    X_test <- matrix(rnorm(p * n_test), nrow = n_test)
+    
+    # simulate Y
+    Y_train <- linkfun(X_train) + rnorm(n_train)
+    Y_test <- linkfun(X_test) + rnorm(n_test)
+    
+    # fit random forest model
+    rf <- randomForest(X_train, Y_train, nodesize = allnodesize[j], mtry = 1,
+                       sampsize = 150)
+    
+    # store mse
+    all_mse[i, j] <- mean((Y_test - predict(rf, X_test))^2)
+  }
+}
+
+# calculate mean mse for all simulations for each nodesize value
+mean_mse <- colMeans(all_mse)
+
+# plot
+plot(allnodesize, mean_mse, type = "b", xlab = "Node Size", ylab = "mean MSE")
+```
+
+```{r}
+nsim <- 100
+allmtry <- 1:10
+p <- 8
+
+# data generator
+linkfun <- function(x){
+  true_y_expectation <- rowSums(x[, 1:8])
+  return(true_y_expectation)
+} 
+
+# storage for mse values
+all_mse <- matrix(NA, nrow = nsim, ncol = length(allmtry))
+rownames(all_mse) <- paste0("Sim_", 1:nsim)
+colnames(all_mse) <- paste0("mtry_", allmtry)
+
+# loop through each simulation
+for (i in 1:nsim) {
+  # loop through each mtry value
+  for (j in 1:length(allmtry)) {
+    # simulate X
+    X_train <- matrix(rnorm(p * n_train), nrow = n_train)
+    X_test <- matrix(rnorm(p * n_test), nrow = n_test)
+    
+    # simulate Y
+    Y_train <- linkfun(X_train) + rnorm(n_train)
+    Y_test <- linkfun(X_test) + rnorm(n_test)
+    
+    # fit random forest model
+    rf <- randomForest(X_train, Y_train, nodesize = 1, mtry = allmtry[j], sampsize = 150)
+    all_mse[i, j] <- mean((Y_test - predict(rf, X_test))^2)
+  }
+}
+
+# calculate mean mse for all simulations for each mtry value
+mean_mse <- colMeans(all_mse)
+
+# plot
+plot(allmtry, mean_mse, type = "b", xlab = "mtry", ylab = "mean MSE")
+```
+
+```{r}
+nsim <- 100
+allntree <- c(1, 2, 3, 5, 10, 50)
+p <- 8
+
+# data generator
+linkfun <- function(x){
+  true_y_expectation <- rowSums(x[, 1:8, drop = FALSE])
+  return(true_y_expectation)
+} 
+
+# storage for all predictions
+allpred <- matrix(NA, nsim, length(allntree))
+rownames(allpred) <- paste0("Sim_", 1:nsim)
+colnames(allpred) <- paste0("ntree_", allntree)
+
+# loop through each simulation
+for (i in 1:nsim) {
+  # loop through each ntree value
+  for (j in 1:length(allntree)) {
+    # simulate X
+    X_train <- matrix(rnorm(p * n_train), nrow = n_train)
+    X_test <- matrix(rnorm(p), nrow = 1)
+    
+    # simulate Y
+    Y_train <- linkfun(X_train) + rnorm(n_train)
+    Y_test <- linkfun(X_test) + rnorm(n_test)
+    
+    # fit random forest model
+    rf <- randomForest(X_train, Y_train, nodesize = 1, mtry = 8, ntree = allntree[j],
+                       sampsize = 150)
+    
+    # store predictions
+    allpred[i, j] <- predict(rf, X_test)
+  }
+}
+
+# calculate variance across all simulation runs for a particular ntree value
+all_var <- apply(allpred, 2, var)
+
+# plot
+plot(allntree, all_var, type = "b", xlab = "ntree", ylab = "Variance")
+```
+
+```{r}
+X_test <- matrix(rnorm(p), nrow = 1)
+
+```
+
+```{r}
+# Set final parameters
+final_ntree <- 50
+final_mtry <- 8
+final_nodesize <- 1
+
+# Fit final random forest model
+rf_final <- randomForest(X_train, Y_train, ntree = final_ntree, mtry = final_mtry, nodesize = final_nodesize, sampsize = 150)
+(rf_final)
+```
+
+
+```{r}
+
+predictions_rf <- predict(rf_final, newdata = X_test)
+# Calculate R-squared
+ss_total <- sum((Y_test - mean(Y_test))^2)  # Total sum of squares
+ss_residual <- sum((Y_test - predictions_rf)^2)  # Residual sum of squares
+r_squared_rf <- 1 - (ss_residual / ss_total)
+
+# Print R-squared value
+print(paste("R-squared (Random Forest):", r_squared_rf))
+
+
+```
+
+
+```{r}
+importance_values <- importance(rf_final)
+
+importance_labeled <- data.frame(
+  Feature = rownames(importance_values),  # Extract feature names
+  IncNodePurity = importance_values[, "IncNodePurity"]  # Extract the importance values
+)
+
+importance_sorted <- importance_labeled[order(importance_labeled$IncNodePurity, decreasing = TRUE), ]
+
+
+
+custom_labels <- c("brand", "fuel_type", "transmission", "int_col", "car_age", "mileage", "Horsepower", "Accident_Label")
+
+importance_labeled$Feature <- custom_labels
+
+
+importance_sorted <- importance_labeled[order(importance_labeled$IncNodePurity, decreasing = TRUE), ]
+
+library(ggplot2)
+
+ggplot(importance_sorted, aes(x = reorder(Feature, -IncNodePurity), y = IncNodePurity)) +
+  geom_bar(stat = "identity", fill = "darkred") +
+  coord_flip() +
+  xlab("Features") +
+  ylab("IncNodePurity") +
+  ggtitle("Feature Importance (Random Forest)")
+
+```
+
+
+
+Tunning Process: 
+
+
+Tuning nodesize: Controls tree depth by adjusting the minimum number of observations required in terminal nodes.
+Tuning mtry: Controls the number of predictors considered for each split.
+Tuning ntree: Controls the number of trees in the forest.
+Cross-validation: MSE or prediction variance is used to evaluate model performance across different parameter values.
+Feature importance: Identifies which features have the most impact on the model's predictions.
+
+
+4. SVM 
+
+```{r}
+library(e1071)
+library(caret)
+
+df_cars_numeric$Accident_Label <- as.factor(df_cars_numeric$Accident_Label)
+
+set.seed(10)  # for reproducibility
+train_index <- createDataPartition(df_cars_numeric$price, p = 0.8, list = FALSE)
+train_data <- df_cars_numeric[train_index, ]
+test_data <- df_cars_numeric[-train_index, ]
+
+```
+
+```{r}
+tune_grid <- expand.grid(.sigma = seq(0.01, 0.1, by = 0.01), 
+                         .C = seq(1, 10, by = 1))
+
+# Train the SVM model
+svm_model <- train(price ~ brand + fuel_type + transmission + ext_col + int_col +
+                   car_age + milage + Horsepower + Displacement + Cylinders + Accident_Label, data = train_data, 
+                   method = "svmRadial", 
+                   tuneGrid = tune_grid, 
+                   trControl = trainControl(method = "cv", number = 5))
+
+# View the tuning results
+print(svm_model)
+
+```
+
+```{r}
+predictions <- predict(svm_model, newdata = test_data)
+
+# Evaluate the model performance using RMSE (Root Mean Squared Error)
+rmse <- sqrt(mean((predictions - test_data$price)^2))
+print(paste("RMSE:", rmse))
+```
+
+```{r}
+# Plot actual vs predicted values
+library(ggplot2)
+
+ggplot(data = test_data, aes(x = price, y = predictions)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "red") +
+  labs(title = "Actual vs Predicted Prices", x = "Actual Price", y = "Predicted Price")
+
+```
+
+```{r}
+ss_total <- sum((test_data$price - mean(test_data$price))^2)
+ss_residual <- sum((test_data$price - predictions)^2)
+r_squared <- 1 - (ss_residual / ss_total)
+
+print(paste("R-squared:", r_squared))
+```
+
+
+
+5. Gradient Boosting Regression 
+
+```{r}
+str(df_cars_numeric)
+```
+
+```{r}
+# Load necessary libraries
+library(xgboost)
+library(caret)
+library(dplyr)
+
+df_cars_numeric$Accident_Label <- as.numeric(factor(df_cars_numeric$Accident_Label))
+
+features <- df_cars_numeric %>%
+  select(-price) 
+
+features_scaled <- scale(features)
+target <- df_cars_numeric$price
+
+set.seed(10)
+trainIndex <- createDataPartition(target, p = 0.7, list = FALSE)
+train_data <- features_scaled[trainIndex, ]
+train_target <- target[trainIndex]
+test_data <- features_scaled[-trainIndex, ]
+test_target <- target[-trainIndex]
+
+# Convert to DMatrix format (required by xgboost)
+train_dmatrix <- xgb.DMatrix(data = train_data, label = train_target)
+test_dmatrix <- xgb.DMatrix(data = test_data, label = test_target)
+
+# Set up a grid for hyperparameter tuning
+tune_grid <- expand.grid(
+  nrounds = 100,    # Number of boosting rounds
+  max_depth = c(4, 6, 8),  # Depth of trees
+  eta = c(0.01, 0.1, 0.3),  # Learning rate
+  gamma = c(0, 1, 2),    # Regularization term
+  colsample_bytree = c(0.6, 0.8, 1),  # Column sampling
+  min_child_weight = c(1, 2),  # Minimum sum of instance weight
+  subsample = c(0.6, 0.8, 1)  # Subsample ratio
+)
+
+# Set up cross-validation and tuning
+train_control <- trainControl(
+  method = "cv",           # Cross-validation
+  number = 5,              # 5-fold cross-validation
+  search = "grid",         # Grid search
+  verboseIter = TRUE       # Show progress
+)
+
+# Train the model with cross-validation and tuning
+model <- train(
+  x = train_data, 
+  y = train_target, 
+  method = "xgbTree", 
+  trControl = train_control,
+  tuneGrid = tune_grid
+)
+
+# Print the best tuning parameters
+print(model$bestTune)
+
+```
+
+```{r}
+# Use the trained model to predict on the test set
+predictions <- predict(model, newdata = test_data)
+
+# Calculate RMSE (Root Mean Squared Error) as performance measure
+rmse <- sqrt(mean((predictions - test_target)^2))
+cat("RMSE: ", rmse, "\n")
+
+# Plot actual vs predicted values
+plot(test_target, predictions, main = "Actual vs Predicted", xlab = "Actual Price", ylab = "Predicted Price", col = "blue")
+abline(0, 1, col = "red")
+```
+
+
+```{r}
+
+residuals <- test_target - final_predictions
+
+
+tss <- sum((test_target - mean(test_target))^2)
+
+# Calculate residual sum of squares (RSS)
+rss <- sum(residuals^2)
+
+# Calculate R-squared
+r_squared <- 1 - (rss / tss)
+
+cat("R-squared: ", r_squared, "\n")
+
+```
+
+
+Open Ended Question 
+
+```{r}
+summary(df_cars)
+```
+
+```{r}
+unique(df_cars$brand)
+```
+
+
+```{r}
+depreciation_rates <- c(
+  "Ford" = 15, "INFINITI" = 14, "Audi" = 12, "Lexus" = 10, "Toyota" = 12, 
+  "Lincoln" = 15, "Land" = 20, "Dodge" = 17, "Nissan" = 14, "Jaguar" = 18, 
+  "Chevrolet" = 16, "Hyundai" = 14, "Mercedes-Benz" = 11, "BMW" = 11, 
+  "Kia" = 14, "Jeep" = 13, "Bentley" = 9, "MINI" = 14, "Porsche" = 8, 
+  "Hummer" = 18, "Chrysler" = 16, "Acura" = 12, "Cadillac" = 14, 
+  "Maserati" = 10, "Genesis" = 13, "Volkswagen" = 15, "GMC" = 15, 
+  "Subaru" = 12, "Scion" = 17, "Volvo" = 12, "Mitsubishi" = 18, 
+  "Saturn" = 20, "Honda" = 10, "RAM" = 14, "Mazda" = 13, "Alfa" = 16, 
+  "Buick" = 16, "Aston" = 10, "Lotus" = 12, "Rolls-Royce" = 6, 
+  "Pontiac" = 22, "FIAT" = 20, "Saab" = 19, "Mercury" = 21, 
+  "Plymouth" = 22, "smart" = 19, "Maybach" = 8, "Suzuki" = 18
+)
+
+# Add the depreciation rates to the dataset
+df_cars$depreciation_rate <- depreciation_rates[df_cars$brand]
+
+# Preview the updated dataset
+head(df_cars)
+
+```
+
+```{r}
+df_cars$estimated_original_price <- df_cars$price / 
+                                    ((1 - df_cars$depreciation_rate / 100)^df_cars$car_age)
+
+# Preview the updated dataset
+original_price_dataset <- df_cars[, c("brand","model","model_year","milage","depreciation_rate", "price", "estimated_original_price")]
+View(original_price_dataset)
+```
+
+
+```{r}
+price^(1/car_age)/(1-deprication_rate/100) = estimated_original_price
+```
+
