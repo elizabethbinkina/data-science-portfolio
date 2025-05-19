@@ -1,0 +1,260 @@
+---
+title: "vole_project_"
+author: "Elizabeth Binkina"
+date: "4/15/2025"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+library(readr)
+
+# Read the data
+df <- read_csv("processed_data.csv")
+#View(df)
+
+View(df)
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(df, aes(x = Spp, fill = Spp)) +
+  geom_bar() +
+  facet_wrap(~ Site) +
+  labs(title = "Histogram of MIPE and MIOC Counts by Site",
+       x = "Species",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+```{r}
+library(ggplot2)
+
+ggplot(df, aes(x = as.factor(Age), y = Actual_mass, fill = Spp)) +
+  geom_violin(trim = FALSE) +
+  geom_boxplot(width = 0.1, position = position_dodge(0.9)) +
+  labs(title = "Distribution of Actual Mass by Age and Species",
+       x = "Age",
+       y = "Actual Mass") +
+  theme_minimal() +
+  scale_fill_manual(values = c("#c293cf", "#00a437"))
+```
+
+
+```{r}
+library(RColorBrewer)
+
+brewer.pal(3, "PRGn")
+ggplot(df, aes(x = Site, y = Actual_mass, fill = Spp)) +
+  geom_boxplot() +
+  labs(title = "Distribution of Actual Mass by Site and Species",
+       x = "Site",
+       y = "Actual Mass") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_manual(values = c("#c293cf", "#00a437"))  # PRGn purple and green
+
+```
+
+```{r}
+df_juvenile <- subset(df, Age == "J")
+df_adult <- subset(df, Age == "A")
+
+df_juvenile
+```
+
+
+
+ANOVA SUMMARY
+
+
+
+
+
+
+```{r}
+model_juvenile <- aov(Actual_mass ~ Season * Spp * Y_coordinate , data = df_juvenile)
+summary(model_juvenile)
+```
+
+```{r}
+model_adult <- aov(Actual_mass ~ Season * Spp * Y_coordinate, data = df_adult)
+summary(model_adult)
+
+```
+
+```{r}
+par(mfrow = c(2, 2))
+plot(model_juvenile)
+
+# Adult
+plot(model_adult)
+```
+
+```{r}
+shapiro.test(residuals(model_juvenile))
+shapiro.test(residuals(model_adult))
+
+```
+
+```{r}
+kruskal.test(Actual_mass ~ Season, data = df_adult)
+```
+
+Model 1: Juveniles
+ANOVA Results:
+No significant effects of Season, Species (Spp), or their interaction on Actual_mass.
+
+p-values for all terms > 0.2
+
+Assumptions:
+Shapiro-Wilk: W = 0.9833, p = 0.3178 → residuals are normally distributed 
+
+Diagnostic Plots: Residuals appear homoscedastic and well-behaved.
+
+Conclusion:
+
+Juvenile mass is relatively stable across seasons and species.
+
+No evidence of seasonal or species-related variation in juvenile body mass.
+
+Juveniles might not be fully expressing seasonal or inter-species ecological adaptations that affect mass in adults.
+
+
+
+
+Model 2: Adults
+ANOVA Results:
+Season is highly significant (F = 14.43, p < 0.001) 
+
+Spp (Species) and interaction terms are not significant.
+
+Assumptions:
+Shapiro-Wilk: W = 0.99122, p = 0.0444 → slight deviation from normality 
+
+Diagnostic Plots:
+
+Slight tail skew in Q-Q plot, but generally acceptable.
+
+No alarming patterns in residuals vs. fitted or scale-location.
+
+Conclusion:
+Adult body mass significantly varies across seasons.
+
+This suggests strong seasonal physiological or behavioral changes??? --> consult with bio people
+Species differences are not significant, indicating:
+
+Either minimal size differences between species, or
+
+That within-season variability swamps inter-species variation.
+
+The interaction is also not significant → all species seem to follow a similar seasonal trend in mass.
+
+
+
+
+```{r}
+model_juvenile <- aov(Y_coordinate ~ Season * Spp * Actual_mass , data = df_juvenile)
+summary(model_juvenile)
+```
+
+```{r}
+model_adult <- aov(Y_coordinate ~ Season * Spp * Actual_mass , data = df_adult)
+summary(model_adult)
+
+```
+
+
+
+```{r}
+par(mfrow = c(2, 2))
+plot(model_juvenile)
+
+# Adult
+plot(model_adult)
+```
+
+```{r}
+df_juvenile$Season <- as.factor(df_juvenile$Season)
+df_juvenile$Spp <- as.factor(df_juvenile$Spp)
+model_juvenile_lm <- lm(Y_coordinate ~ Season * Spp * Actual_mass, data = df_juvenile)
+summary(model_juvenile_lm)
+```
+
+```{r}
+plot(model_juvenile_lm)
+```
+
+```{r}
+
+df_adult$Season <- as.factor(df_adult$Season)
+df_adult$Spp <- as.factor(df_adult$Spp)
+model_adult_lm <- lm(Y_coordinate ~ Season * Spp * Actual_mass, data = df_juvenile)
+summary(model_adult_lm)
+
+```
+
+```{r}
+
+model_juv <- aov(Actual_mass ~  Spp * Y_coordinate, data = df_juvenile)
+summary(model_juv)
+```
+
+```{r}
+model_adult <- aov(Actual_mass ~ Spp * Y_coordinate , data = df_adult)
+summary(model_adult)
+```
+
+```{r}
+ggplot(df_juvenile, aes(x = Actual_mass, y = Y_coordinate, color = Spp)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Spp)) +
+  facet_wrap(~ Season) +
+  labs(
+    title = "Interaction of Species, Season, and Mass on Y_coordinate (Juveniles)",
+    x = "Actual Mass",
+    y = "Y Coordinate (Latitude)",
+    color = "Species",
+    linetype = "Species"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+```{r}
+
+```
+
+
+
+
+
+
