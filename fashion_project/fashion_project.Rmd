@@ -1,0 +1,318 @@
+---
+title: "project4_cs598"
+author: "Elizabeth Binkina"
+date: "12/8/2025"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+#install.packages("keras")
+library(keras)
+
+train <- read.csv("fashion-mnist_train.csv")
+test  <- read.csv("fashion-mnist_test.csv")
+
+dim(train)
+dim(test)
+```
+
+```{r}
+head(train)
+```
+
+```{r}
+head(test)
+```
+
+```{r}
+y_train <- train$label 
+y_test <- test$label 
+
+x_train <- as.matrix(train[,-1])
+x_test <- as.matrix(test[,-1])
+
+x_train <- x_train/255
+x_test <- x_test/255
+
+```
+
+```{r}
+pca_ <- prcomp(x_train, center = TRUE, scale. = FALSE)
+
+var_exp <- cumsum(pca_$sdev^2) / sum(pca_$sdev^2)
+k <- which(var_exp >= 0.90)[1]
+k
+```
+
+```{r}
+X_train_pca <- pca_$x[, 1:k]
+
+X_test_centered <- sweep(x_test, 2, pca_$center, "-")
+X_test_pca <- X_test_centered %*% pca_$rotation[, 1:k]
+
+dim(X_train_pca)  
+dim(X_test_pca)   
+```
+
+a. 
+
+```{r}
+y_train <- train$label
+y_test  <- test$label
+
+train_freq <- table(y_train)
+test_freq  <- table(y_test)
+
+train_freq
+prop.table(train_freq)
+
+test_freq
+prop.table(test_freq)
+
+```
+
+b.
+
+```{r}
+set.seed(598)                
+n_sub <- 5000               
+
+sub_idx <- sample(1:nrow(X_train_pca), n_sub)
+
+X_sub <- X_train_pca[sub_idx, ]
+y_sub <- y_train[sub_idx]
+
+```
+
+```{r}
+library(cluster)
+library(factoextra)
+
+set.seed(598)
+km_sub <- kmeans(X_sub, centers = 10, nstart = 25)
+
+d_sub  <- dist(X_sub)
+sil_sub <- silhouette(km_sub$cluster, d_sub)
+
+fviz_silhouette(sil_sub)
+
+```
+
+```{r}
+cluster_table_sub <- table(km_sub$cluster, y_sub)
+cluster_table_sub
+apply(cluster_table_sub, 1, function(x) names(which.max(x)))
+
+```
+
+Hierachical clustering
+```{r}
+set.seed(598)
+n_sub <- 3000
+sub_idx <- sample(1:nrow(X_train_pca), n_sub)
+
+X_sub <- X_train_pca[sub_idx, ]
+y_sub <- y_train[sub_idx]
+
+```
+
+```{r}
+d_sub <- dist(X_sub)
+
+hc <- hclust(d_sub, method = "ward.D2")
+
+plot(hc, labels = FALSE, main = "Hierarchical Clustering Dendrogram")
+
+```
+
+```{r}
+hc_clusters <- cutree(hc, k = 10)
+table(hc_clusters, y_sub)
+
+apply(table(hc_clusters, y_sub), 1, function(x) names(which.max(x)))
+
+```
+
+```{r}
+sil_hc <- silhouette(hc_clusters, d_sub)
+
+fviz_silhouette(sil_hc)
+
+```
+2. Multi-class Classification Models
+
+
+```{r}
+y_train_fac <- factor(y_train)
+y_test_fac  <- factor(y_test)
+
+# 1) Multinomial Logistic Regression
+
+library(nnet)
+
+set.seed(598)
+
+train_df <- data.frame(label = y_train_fac, X_train_pca)
+
+logit_fit <- multinom(label ~ ., data = train_df, trace = FALSE)
+
+logit_pred  <- predict(logit_fit, newdata = data.frame(X_test_pca))
+logit_error <- mean(logit_pred != y_test_fac)
+logit_error
+
+logit_cm <- table(Predicted = logit_pred, True = y_test_fac)
+logit_cm
+
+
+```
+
+```{r}
+# 2) k-Nearest Neighbors
+
+library(class)
+
+set.seed(589)
+k_val <- 5   # mention in the report choosing k = 5
+
+knn_pred  <- knn(train = X_train_pca,
+                 test  = X_test_pca,
+                 cl    = y_train_fac,
+                 k     = k_val)
+
+knn_error <- mean(knn_pred != y_test_fac)
+knn_error
+
+knn_cm <- table(Predicted = knn_pred, True = y_test_fac)
+knn_cm
+
+```
+
+```{r}
+# 3) Support Vector Machine (RBF kernel)
+
+library(e1071)
+
+set.seed(598)
+
+svm_fit <- svm(x = X_train_pca,
+               y = y_train_fac,
+               kernel = "radial",
+               gamma  = 0.01,
+               cost   = 10)
+
+svm_pred  <- predict(svm_fit, newdata = X_test_pca)
+svm_error <- mean(svm_pred != y_test_fac)
+svm_error
+
+svm_cm <- table(Predicted = svm_pred, True = y_test_fac)
+svm_cm
+
+```
+
+```{r}
+
+# 4) Random Forest
+
+library(randomForest)
+
+set.seed(598)
+
+rf_fit <- randomForest(x = X_train_pca,
+                       y = y_train_fac,
+                       ntree = 200,
+                       mtry  = 20)
+
+rf_pred  <- predict(rf_fit, newdata = X_test_pca)
+rf_error <- mean(rf_pred != y_test_fac)
+rf_error
+
+rf_cm <- table(Predicted = rf_pred, True = y_test_fac)
+rf_cm
+
+```
+
+```{r}
+
+# Compare error rates
+
+errors <- c(
+  Multinomial_LogReg = logit_error,
+  KNN_k5             = knn_error,
+  SVM_RBF            = svm_error,
+  Random_Forest      = rf_error
+)
+
+errors
+
+barplot(errors,
+        main = "Test Classification Error Rates",
+        ylab = "Error rate",
+        col = "darkblue",
+        ylim = c(0, max(errors) * 1.1))
+
+
+```
+
+```{r}
+library(cluster)
+
+set.seed(598)
+
+# Vector of k values to try
+k_vals <- 2:15
+sil_width <- numeric(length(k_vals))
+
+for (i in seq_along(k_vals)) {
+  k <- k_vals[i]
+  km_tmp <- kmeans(X_sub, centers = k, nstart = 20)
+  sil <- silhouette(km_tmp$cluster, dist(X_sub))
+  sil_width[i] <- mean(sil[, 3])
+}
+
+# Find optimal k (max average silhouette)
+k_opt <- k_vals[which.max(sil_width)]
+k_opt
+
+```
+
+```{r}
+# Silhouette plot
+plot(
+  k_vals, sil_width, type = "b", pch = 19,
+  xlab = "Number of clusters (k)",
+  ylab = "Average silhouette width",
+  main = "Silhouette Analysis for K-means on PCA-Reduced Fashion-MNIST"
+)
+abline(v = k_opt, lty = 2)
+
+```
+
+```{r}
+library(ggplot2)
+
+set.seed(598)
+km_opt <- kmeans(X_sub, centers = k_opt, nstart = 50)
+
+pca_df <- as.data.frame(X_sub)
+colnames(pca_df)[1:2] <- c("PC1", "PC2")  # for nice axis labels
+pca_df$cluster <- factor(km_opt$cluster)
+
+ggplot(pca_df, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(alpha = 0.4, size = 0.7) +
+  labs(
+    title = paste0("K-means Clusters (k = ", k_opt, ") in PCA Space"),
+    x = "Principal Component 1",
+    y = "Principal Component 2",
+    color = "Cluster"
+  ) +
+  theme_minimal()
+
+```
+
