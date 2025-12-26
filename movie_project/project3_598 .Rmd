@@ -1,0 +1,304 @@
+---
+title: "project3_598"
+author: "Elizabeth Binkina"
+date: "11/12/2025"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(dplyr)
+library(stringr)
+
+movies_file <- "movies.dat"
+ratings_file <- "ratings.dat"
+users_file <- "users.dat"
+
+read_movielens <- function(file, n_fields) {
+  lines <- readLines(file, warn = FALSE)
+  data <- str_split_fixed(lines, "::", n_fields)
+  as.data.frame(data, stringsAsFactors = FALSE)
+}
+
+movies <- read_movielens(movies_file, 3)
+ratings <- read_movielens(ratings_file, 4)
+users <- read_movielens(users_file, 5)
+
+colnames(movies) <- c("MovieID", "Title", "Genres")
+colnames(ratings) <- c("UserID", "MovieID", "Rating", "Timestamp")
+colnames(users) <- c("UserID", "Gender", "Age", "Occupation", "ZipCode")
+
+movies$MovieID <- as.integer(movies$MovieID)
+ratings$UserID <- as.integer(ratings$UserID)
+ratings$MovieID <- as.integer(ratings$MovieID)
+ratings$Rating <- as.numeric(ratings$Rating)
+ratings$Timestamp <- as.numeric(ratings$Timestamp)
+users$UserID <- as.integer(users$UserID)
+
+# converting timestamp to readable date
+ratings$Date <- as.POSIXct(ratings$Timestamp, origin = "1970-01-01")
+
+# Merging datasets 
+movie_ratings <- merge(ratings, movies, by = "MovieID")
+
+cat("Movies:", nrow(movies), "\n")
+cat("Ratings:", nrow(ratings), "\n")
+cat("Users:", nrow(users), "\n")
+
+```
+
+```{r}
+head(movie_ratings)
+```
+
+## Part A 
+
+
+
+
+
+"Popularity" definition: based on average rating among movies with at least 1250 user ratings 
+
+```{r}
+movie_summary <- movie_ratings %>%
+  group_by(MovieID, Title) %>%
+  summarise(
+    avg_rating = mean(Rating),
+    num_ratings = n()
+  ) %>%
+  ungroup()
+
+# Top 10 Highest Rated (with >= 1250 ratings)
+top_highest_rated <- movie_summary %>%
+  filter(num_ratings >= 1250) %>%
+  arrange(desc(avg_rating)) %>%
+  head(10)
+
+cat("\nTop 10 Highest Rated Movies :\n")
+print(top_highest_rated)
+
+```
+
+
+## B 
+
+```{r}
+library(tidyr)
+library(tibble)
+library(stringr)
+
+R_dense <- ratings %>%
+  select(UserID, MovieID, Rating) %>%
+  mutate(UserID = as.integer(UserID),
+         MovieID = as.integer(MovieID)) %>%
+  arrange(UserID, MovieID) %>%
+  pivot_wider( names_from = MovieID,values_from = Rating,values_fill = NA_real_
+  ) %>%
+  arrange(UserID)
+
+user_ids <- R_dense$UserID
+R_dense <- R_dense %>% remove_rownames() %>% column_to_rownames("UserID")
+R_dense <- as.matrix(R_dense)
+
+row_means <- rowMeans(R_dense, na.rm = TRUE)  
+R_centered_dense <- sweep(R_dense, 1, row_means,
+  FUN = function(x, m) ifelse(is.na(x), NA_real_, x - m)
+)
+
+movie_ids <- as.integer(colnames(R_dense))
+cat("\nCentered rating matrix dimensions:\n")
+dim(R_centered_dense)    
+```
+
+## 2. 
+
+```{r}
+library(Matrix)
+
+R_filled <- R_centered_dense
+R_filled[is.na(R_filled)] <- 0
+R_sparse <- Matrix(R_filled, sparse = TRUE)
+
+co_counts <- as.matrix((t(!is.na(R_centered_dense)) %*% (!is.na(R_centered_dense))))
+num <- as.matrix(t(R_sparse) %*% R_sparse)
+norms <- sqrt(colSums(R_sparse^2))
+denom <- outer(norms, norms)
+cosine_raw <- num / denom
+
+cosine_raw[co_counts < 3] <- NA
+cosine_sim <- (1 + cosine_raw) / 2
+diag(cosine_sim) <- 1
+
+cat("\nSimilarity matrix dimensions:", dim(cosine_sim), "\n")
+
+cat("\nSimilarity Matrix ")
+print(cosine_sim[1:5, 1:5])  
+```
+
+## 3. 
+```{r}
+library(dplyr)
+library(stringdist)
+
+keep_top_k <- function(sim_matrix, k = 30) {
+  n <- nrow(sim_matrix)
+  sim_filtered <- matrix(NA_real_, n, n, dimnames = dimnames(sim_matrix))
+  for (i in seq_len(n)) {
+    sims <- sim_matrix[i, ]
+    sims[i] <- NA
+    valid_idx <- which(!is.na(sims))
+    if (length(valid_idx) > k) {
+      top_k <- order(sims[valid_idx], decreasing = TRUE)[1:k]
+      keep_idx <- valid_idx[top_k]
+    } else {
+      keep_idx <- valid_idx
+    }
+    sim_filtered[i, keep_idx] <- sims[keep_idx]
+  }
+  
+  sim_filtered <- pmax(sim_filtered, t(sim_filtered), na.rm = TRUE)
+  diag(sim_filtered) <- 1
+  return(sim_filtered)
+}
+
+cosine_top30 <- keep_top_k(cosine_sim, k = 30)
+movie_lookup <- movies %>%
+  mutate(MovieID = as.character(MovieID),
+    Title = iconv(Title, from = "", to = "UTF-8")
+  )
+
+target_titles <- c("Toy Story (1995)","GoldenEye (1995)","Liar Liar (1997)","Lost World: Jurassic Park (1997)","Sixth Sense, The (1999)")
+target_titles <- iconv(target_titles, from = "", to = "UTF-8")
+matched_movie_ids <- sapply(target_titles, function(t) {
+  movie_lookup$MovieID[
+    which.min(stringdist(t, movie_lookup$Title, method = "jw"))
+  ]
+})
+
+names(matched_movie_ids) <- target_titles
+
+cat("\n TOP-30 filtered pairwise similarity values \n\n")
+
+for (i in seq_along(matched_movie_ids)) {
+  movie_id <- matched_movie_ids[i]
+  movie_title <- names(matched_movie_ids)[i]
+  sims <- cosine_top30[movie_id, ]
+  sims_non_na <- sims[!is.na(sims) & names(sims) != movie_id]
+  cat(movie_title, ":\n")
+  print(sims_non_na)
+  cat("\n")
+}
+
+```
+
+
+
+## 4. 
+```{r}
+IBCF_recommend <- function(newuser,sim_matrix,movie_summary,top_n = 10,
+                           popularity_ranking_file = "movie_popularity.csv") {
+
+  if (length(newuser) != ncol(sim_matrix))
+    stop("")
+
+  user_mean <- mean(newuser, na.rm = TRUE)
+  centered_user <- newuser - user_mean
+  rated_idx   <- which(!is.na(centered_user))
+  unrated_idx <- which(is.na(centered_user))
+  preds <- rep(NA_real_, length(newuser))
+
+  for (j in unrated_idx) {
+    sims <- sim_matrix[j, rated_idx]
+    ratings <- centered_user[rated_idx]
+    valid <- !is.na(sims)
+    if (sum(valid) >= 1) {
+      num <- sum(sims[valid] * ratings[valid], na.rm = TRUE)
+      denom <- sum(abs(sims[valid]), na.rm = TRUE)
+      if (denom > 0) {
+        preds[j] <- user_mean + (num / denom) 
+      }
+    }
+  }
+
+  names(preds) <- colnames(sim_matrix)
+  pred_df <- data.frame(Title = names(preds),PredictedRating = preds
+  ) %>%
+    filter(!is.na(PredictedRating)) %>%arrange(desc(PredictedRating))
+
+  if (file.exists(popularity_ranking_file)) {
+    pop_rank <- read.csv(popularity_ranking_file, stringsAsFactors = FALSE)
+  } else {
+    pop_rank <- movie_summary %>%
+      arrange(desc(num_ratings), desc(avg_rating)) %>%
+      select(Title)
+    write.csv(pop_rank, popularity_ranking_file, row.names = FALSE)
+  }
+
+  already_rated_titles <- names(newuser)[which(!is.na(newuser))]
+
+  if (nrow(pred_df) < top_n) {
+    needed <- top_n - nrow(pred_df)
+    fillers <- pop_rank %>%
+      filter(!(Title %in% pred_df$Title),
+             !(Title %in% already_rated_titles)) %>%
+      slice_head(n = needed) %>%
+      mutate(PredictedRating = NA)
+    pred_df <- bind_rows(pred_df, fillers)
+  }
+
+  top_recs <- pred_df %>%
+    slice_head(n = top_n)
+
+  return(top_recs)
+}
+
+```
+
+## 5. 
+
+```{r}
+library(dplyr)
+library(stringdist)
+
+user1500 <- R_dense[1500, ]
+names(user1500) <- colnames(R_dense)
+
+cat("\nTop 10 Recommendations for Existing User (row 1500)\n")
+
+rec_user1500 <- IBCF_recommend(
+  newuser        = user1500,
+  sim_matrix     = cosine_top30,
+  movie_summary  = movie_summary,
+  top_n          = 10
+)
+
+print(rec_user1500)
+
+```
+
+```{r}
+newuser <- rep(NA, ncol(cosine_top30))
+names(newuser) <- colnames(cosine_top30)
+
+starwars_id <- "260"
+id4_id      <- "780"
+
+newuser[starwars_id] <- 5
+newuser[id4_id]      <- 4
+
+cat("\nTop 10 Recommendations for Hypothetical User\n")
+
+rec_newuser <- IBCF_recommend(
+  newuser        = newuser,
+  sim_matrix     = cosine_top30,
+  movie_summary  = movie_summary,
+  top_n          = 10
+)
+
+print(rec_newuser)
+
+```
