@@ -1,0 +1,129 @@
+/**********************************
+ * FILE NAME: MP1Node.h
+ *
+ * DESCRIPTION: Membership protocol run by this Node.
+ * 				Header file of MP1Node class. (Revised 2020)
+ *
+ *  Starter code template
+ **********************************/
+
+#ifndef _MP1NODE_H_
+#define _MP1NODE_H_
+
+#include "stdincludes.h"
+#include "Log.h"
+#include "Params.h"
+#include "Member.h"
+#include "EmulNet.h"
+#include "Queue.h"
+
+
+//ADDED THIS HELPERS
+
+enum MsgTypes {
+    JOINREQ,
+    JOINREP,
+    GOSSIP
+};
+
+struct JoinreqPayloadd {
+    int size;
+    MemberListEntry entries[1];
+};
+
+
+/**
+ * Macros
+ */
+#define TREMOVE 20
+#define TFAIL 5
+
+/**
+ * CLASS NAME: MP1Node
+ *
+ * DESCRIPTION: Class implementing Membership protocol functionalities for failure detection
+ */
+class MP1Node {
+private:
+	EmulNet *emulNet;
+	Log *log;
+	Params *par;
+	Member *memberNode;
+	bool shouldDeleteMember;
+	char NULLADDR[6];
+    std::map<std::pair<int,short>, long> timeout_map; // key: (id, port), value = timeout counter
+
+public:
+
+	/**
+	 * Message Types
+	 */
+	enum MsgTypes {
+	    JOINREQ,
+	    JOINREP,
+        GOSSIP, //added this 
+	    UPDATEREQ,
+	    UPDATEREP,
+	    DUMMYLASTMSGTYPE
+	};
+
+
+	/**
+	 * STRUCT NAME: MessageHdr
+	 *
+	 * DESCRIPTION: Header and content of a message
+	 */
+	struct MessageHdr {
+		MsgTypes msgType;
+        //ADDED THIS
+        Address addr;
+	};
+
+    struct MemberMsgEntry {
+        int id;
+        short port;
+        long heartbeat;
+        long timestamp;
+    };
+  
+	MP1Node(Params *params, EmulNet *emul, Log *log, Address *address);
+	MP1Node(Member *member, Params *params, EmulNet *emul, Log *log, Address *address);
+	Member * getMemberNode() {
+		return memberNode;
+	}
+	int recvLoop();
+	static int enqueueWrapper(void *env, char *buff, int size);
+	void nodeStart(char *servaddrstr, short serverport);
+	int initThisNode(Address *joinaddr);
+	int introduceSelfToGroup(Address *joinAddress);
+	int finishUpThisNode();
+	void nodeLoop();
+	void checkMessages();
+	bool recvCallBack(void *env, char *data, int size);
+	void nodeLoopOps();
+	int isNullAddress(Address *addr);
+	Address getJoinAddress();
+	void initMemberListTable(Member *memberNode);
+	void printAddress(Address *addr);
+	virtual ~MP1Node();
+
+    //helper functions i added
+    void addOrUpdateMember(Address addr, long heartbeat, long timestamp);
+    void gossipMembershipList();
+    Address getNodeAddress(int id, short port); 
+    void sendJoinReply(Address target);
+    //void sendJoinReply(Address &destAddr);
+    void mergeMembershipList(char *data, int size);
+    void sendGossip(Address target);
+
+    void addSelfToMemberList();
+
+    //Debugg functions
+    void debugPrintMemberList(const char *tag);
+
+   
+    
+    
+};
+
+#endif /* _MP1NODE_H_ */
