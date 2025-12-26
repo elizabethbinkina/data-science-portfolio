@@ -1,0 +1,429 @@
+---
+title: "bitcoin_project"
+author: "Elizabeth Binkina"
+date: "9/22/2025"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#!. Intro 
+
+#2. Load Data
+
+```{r}
+df <- read.csv("_5acbed1925f148fe950aa47000a74f15_bitcoin.csv")
+View(df)
+```
+
+```{r}
+library(zoo)
+library(tidyverse)
+library(glmnet)
+library(dplyr)
+library(tidyr)
+library(leaps)
+library(forecast)
+library(car)
+library(splines)
+set.seed(598)
+```
+
+```{r}
+df$Date <- as.Date(df$Date)
+str(df)
+```
+#3. Data Cleaning and Reconstruction
+
+```{r cleaning }
+# Replace zeros with NA 
+df <- df %>% mutate(btc_market_price = ifelse(btc_market_price <= 0,
+                                              NA, btc_market_price))
+
+# Sort by Date 
+df <- df %>% arrange(Date)
+df$btc_market_price <- na.approx(df$btc_market_price, na.rm = FALSE)
+
+df <- df %>% drop_na(btc_market_price)
+# Stabilize variance: log transform
+df <- df %>% mutate(log_price = log(btc_market_price))
+
+cat("Rows after cleaning:", nrow(df), "\n")
+summary(df$btc_market_price)
+```
+
+
+```{r}
+p1 <- ggplot(df, aes(Date, btc_market_price)) + geom_line() + 
+  labs(title="BTC Price (USD)", y="Price (USD)")
+p2 <- ggplot(df, aes(Date, log_price)) + geom_line() + 
+  labs(title="BTC Log-Price", y="Log(Price)")
+
+p1; p2
+```
+
+#4. Exploratory Data Analysis 
+
+Outliers
+```{r}
+iqr_price <- IQR(df$btc_market_price)
+q1_price <- quantile(df$btc_market_price, 0.25)
+q3_price <- quantile(df$btc_market_price, 0.75)
+lower <- q1_price - 1.5 * iqr_price
+upper <- q3_price + 1.5 * iqr_price
+price_outliers_pct <- mean(df$btc_market_price < lower | 
+                             df$btc_market_price > upper)
+cat("Proportion of price points outside IQR bounds:", 
+    scales::percent(price_outliers_pct), "\n")
+```
+
+#5. Feature Engineering 
+
+```{r features}
+horizon <- 7      # predict t + 7 days
+n_lags <- 14      # construct lag1..lag14
+
+df_feat <- df %>% arrange(Date)
+for(i in 1:n_lags) df_feat[[paste0("log_price_lag", i)]] <- dplyr::lag(df_feat$log_price, i)
+
+df_feat <- df_feat %>%
+  mutate(
+    ma7 = zoo::rollmean(log_price, 7, fill = NA, align = "right"),
+    ma14 = zoo::rollmean(log_price, 14, fill = NA, align = "right"),
+    vol7 = zoo::rollapply(log_price, width = 7, FUN = sd, fill = NA, align = "right")
+  )
+
+# target is log price at t + horizon
+df_feat <- df_feat %>% mutate(target_log_price = dplyr::lead(log_price, horizon))
+df_feat <- df_feat %>% drop_na()
+cat("Rows after feature engineering:", nrow(df_feat), "\n")
+```
+
+```{r}
+str(df_feat)
+```
+
+
+```{r split}
+#Time-Ordered train / validation / test splot
+N <- nrow(df_feat)
+train_end <- floor(0.70 * N)
+valid_end <- floor(0.85 * N)
+
+train <- df_feat[1:train_end, ]
+valid <- df_feat[(train_end + 1):valid_end, ]
+test  <- df_feat[(valid_end + 1):N, ]
+
+cat("Train rows:", nrow(train), 
+    "Validation rows:", nrow(valid), "Test rows:", nrow(test), "\n")
+```
+
+```{r modelmatrix}
+preds_train <- train %>% select(-Date, -btc_market_price, -log_price, -target_log_price)
+preds_valid <- valid %>% select(-Date, -btc_market_price, -log_price, -target_log_price)
+preds_test  <- test  %>% select(-Date, -btc_market_price, -log_price, -target_log_price)
+
+x_train <- model.matrix(~ . , data = preds_train)[, -1]
+y_train <- train$target_log_price
+
+x_valid <- model.matrix(~ . , data = preds_valid)[, -1]
+y_valid <- valid$target_log_price
+
+x_test <- model.matrix(~ . , data = preds_test)[, -1]
+y_test <- test$target_log_price
+
+common_cols <- intersect(colnames(x_train), colnames(x_valid))
+common_cols <- intersect(common_cols, colnames(x_test))
+
+x_train <- x_train[, common_cols, drop = FALSE]
+x_valid <- x_valid[, common_cols, drop = FALSE]
+x_test  <- x_test[, common_cols, drop = FALSE]
+
+rmse <- function(actual, pred) sqrt(mean((actual - pred)^2, na.rm = TRUE))
+rmse_price <- function(actual_log, pred_log) sqrt(mean
+                                                  ((exp(actual_log) - exp(pred_log))^2, na.rm = TRUE))
+mape <- function(actual_log, pred_log) mean(
+  abs((exp(actual_log) - exp(pred_log)) / (exp(actual_log) + 1e-8)), na.rm = TRUE) * 100
+```
+
+#8.(lag-horizon)
+
+```{r naive}
+naive_pred_valid <- valid[[paste0("log_price_lag", horizon)]]
+naive_rmse_valid <- rmse(y_valid, naive_pred_valid)
+naive_rmse_price_valid <- rmse_price(y_valid, naive_pred_valid)
+naive_mape_valid <- mape(y_valid, naive_pred_valid)
+
+naive_pred_test <- test[[paste0("log_price_lag", horizon)]]
+naive_rmse_test <- rmse(y_test, naive_pred_test)
+naive_rmse_price_test <- rmse_price(y_test, naive_pred_test)
+naive_mape_test <- mape(y_test, naive_pred_test)
+
+cat("validation RMSE (log):", round(naive_rmse_valid, 5),
+    " RMSE (price):", round(naive_rmse_price_valid, 2)," MAPE (%):", 
+    round(naive_mape_valid, 3), "\n")
+```
+
+Model Selection 
+
+# 9. OLS (manual chosen predictors) — train on training set, validate on validation
+
+```{r}
+ols_formula <- as.formula(paste("target_log_price ~",
+                               paste(c(paste0("log_price_lag", 1:5), "ma7", "ma14", "vol7"), 
+                                     collapse = " + ")))
+
+lm_model <- lm(ols_formula, data = train)
+summary(lm_model)
+pred_val_ols <- predict(lm_model, newdata = valid)
+ols_rmse_val <- rmse(y_valid, pred_val_ols)
+ols_rmse_price_val <- rmse_price(y_valid, pred_val_ols)
+ols_mape_val <- mape(y_valid, pred_val_ols)
+cat("OLS validation RMSE (log):", round(ols_rmse_val,5), "price-RMSE:", 
+    round(ols_rmse_price_val,2), "MAPE:", round(ols_mape_val,3), "\n")
+
+```
+
+
+#Multicollinearity Check (VIF)
+```{r vif-check}
+vif_values <- vif(lm_model)
+print(vif_values)
+```
+
+
+# residual Diagnostics for Best Model (Replace `best_model` with chosen one)
+```{r residual-diagnostics}
+resid_best <- resid(lm_model)
+acf(resid_best, main = "ACF of residuals (Best Model)")
+Box.test(resid_best, lag = 20, type = "Ljung-Box")
+```
+### WILL Not be using OLS model due to collinearity
+
+
+# 10. Best-subset selection (leaps) 
+
+```{r bestsubset}
+vars_for_subset <- c(paste0("log_price_lag", 1:14), "ma7", "ma14", "vol7")
+subset_formula <- as.formula(paste("target_log_price ~", 
+                                   paste(vars_for_subset, collapse = " + ")))
+
+regfit <- regsubsets(subset_formula, data = train, nvmax = 10, method = "exhaustive")
+reg_sum <- summary(regfit)
+
+predict_regsubsets <- function(object, newdata, id) {
+  coefi <- coef(object, id = id)
+  mat <- model.matrix(as.formula(paste("~",
+                                       paste(vars_for_subset, collapse = " + "))), newdata)
+  mat <- mat[, names(coefi)[names(coefi) != "(Intercept)"], drop = FALSE]
+  preds <- mat %*% coefi[names(coefi) != "(Intercept)"] + coefi["(Intercept)"]
+  as.numeric(preds)
+}
+
+nv <- min(10, length(reg_sum$which))
+valid_results <- tibble(size = 1:nv, 
+                        RMSE = NA_real_, RMSE_price = NA_real_, MAPE = NA_real_)
+for(i in seq_len(nv)){
+  preds_i <- predict_regsubsets(regfit, valid, id = i)
+  valid_results$RMSE[i] <- rmse(y_valid, preds_i)
+  valid_results$RMSE_price[i] <- rmse_price(y_valid, preds_i)
+  valid_results$MAPE[i] <- mape(y_valid, preds_i)
+}
+valid_results <- valid_results %>% arrange(RMSE)
+valid_results
+
+best_size <- valid_results$size[which.min(valid_results$RMSE)]
+cat("Best subset size by validation RMSE:", best_size, "\n")
+best_coeffs <- coef(regfit, id = best_size)
+best_coeffs
+```
+
+
+```{r}
+selected_vars <- names(best_coeffs)[-1]
+best_formula <- as.formula(paste("target_log_price ~", paste(selected_vars, collapse = " + ")))
+best_model_trainval <- lm(best_formula, data = bind_rows(train, valid))
+
+pred_best_test <- predict(best_model_trainval, newdata = test)
+best_rmse_test <- rmse(y_test, pred_best_test)
+best_rmse_price_test <- rmse_price(y_test, pred_best_test)
+best_mape_test <- mape(y_test, pred_best_test)
+
+best_rmse_val <- valid_results$RMSE[valid_results$size == best_size]
+best_rmse_price_val <- valid_results$RMSE_price[valid_results$size == best_size]
+best_mape_val <- valid_results$MAPE[valid_results$size == best_size]
+
+cat("Best-subset (size=", best_size,
+    ") test RMSE (log):", round(best_rmse_test,5),
+    "price-RMSE:", round(best_rmse_price_test,2), "MAPE:",
+    round(best_mape_test,3), "\n")
+```
+
+# 11. Lasso (glmnet) — tune lambda using the validation set (time-aware)
+
+```{r lasso}
+lambda_grid <- 10^seq(-4, 0, length.out = 100)
+lasso_fit <- glmnet(x_train, y_train, alpha = 1, lambda = lambda_grid)
+
+val_preds_mat <- predict(lasso_fit, newx = x_valid)
+val_rmse_by_lambda <- apply(val_preds_mat, 2, function(p) rmse(y_valid, p))
+
+best_lambda_lasso <- lambda_grid[which.min(val_rmse_by_lambda)]
+cat("Best lambda (Lasso):", best_lambda_lasso, "\n")
+
+# refit 
+x_train_valid <- rbind(x_train, x_valid)
+y_train_valid <- c(y_train, y_valid)
+final_lasso <- glmnet(x_train_valid, y_train_valid, alpha = 1,
+                      lambda = best_lambda_lasso)
+
+# validation
+pred_lasso_val <- predict(lasso_fit, 
+                          newx = x_valid, s = best_lambda_lasso)
+lasso_rmse_val <- rmse(y_valid, pred_lasso_val)
+lasso_rmse_price_val <- rmse_price(y_valid, pred_lasso_val)
+lasso_mape_val <- mape(y_valid, pred_lasso_val)
+
+cat("Lasso (validation) - RMSE (log):", round(lasso_rmse_val, 5),
+"RMSE (price):", round(lasso_rmse_price_val, 2),
+"MAPE (%):", round(lasso_mape_val, 3), "\n")
+
+# non-zero coefficients
+coef_final <- as.matrix(coef(final_lasso))
+nonzero <- rownames(coef_final)[coef_final != 0]
+print(nonzero)
+```
+
+
+# 12. Ridge Regression
+
+```{r}
+ridge_fit <- glmnet(x_train, y_train, alpha = 0, lambda = lambda_grid)
+val_preds_ridge <- predict(ridge_fit, newx = x_valid)
+val_rmse_ridge <- apply(val_preds_ridge, 2, function(p) rmse(y_valid, p))
+
+
+best_lambda_ridge <- lambda_grid[which.min(val_rmse_ridge)]
+cat("Best lambda (Ridge):", best_lambda_ridge, "\n")
+
+
+final_ridge <- glmnet(x_train_valid, 
+                      y_train_valid, alpha = 0, lambda = best_lambda_ridge)
+pred_ridge_val <- predict(ridge_fit, newx = x_valid, s = best_lambda_ridge)
+ridge_rmse_val <- rmse(y_valid, pred_ridge_val)
+ridge_rmse_price_val <- rmse_price(y_valid, pred_ridge_val)
+ridge_mape_val <- mape(y_valid, pred_ridge_val)
+
+
+cat("Ridge (validation) - RMSE (log):", round(ridge_rmse_val, 5),
+"RMSE (price):", round(ridge_rmse_price_val, 2),
+"MAPE (%):", round(ridge_mape_val, 3), "\n")
+```
+
+
+#13. Test Set Evaluation
+
+```{r test-eval}
+# Best-subset refit on train+valid
+top_vars <- names(best_coeffs)[-1]
+best_formula <- as.formula(paste("target_log_price ~", paste(top_vars, collapse = "+")))
+model_best_trainval <- lm(best_formula, data = bind_rows(train, valid))
+pred_best_test <- predict(model_best_trainval, newdata = test)
+
+# Predictions
+pred_lasso_test <- as.numeric(predict(final_lasso, newx = x_test, s = best_lambda_lasso))
+pred_ridge_test <- as.numeric(predict(final_ridge, newx = x_test, s = best_lambda_ridge))
+naive_pred_test <- test[[paste0("log_price_lag", horizon)]]
+
+# Metrics
+test_results <- tibble(
+Model = c("Naive", "Best-Subset", "Ridge", "Lasso"),
+RMSE_log = c(rmse(y_test, naive_pred_test),
+rmse(y_test, pred_best_test),
+rmse(y_test, pred_ridge_test),
+rmse(y_test, pred_lasso_test)),
+RMSE_price = c(rmse_price(y_test, naive_pred_test),
+rmse_price(y_test, pred_best_test),
+rmse_price(y_test, pred_ridge_test),
+rmse_price(y_test, pred_lasso_test)),
+MAPE = c(mape(y_test, naive_pred_test),
+mape(y_test, pred_best_test),
+mape(y_test, pred_ridge_test),
+mape(y_test, pred_lasso_test))
+) %>% mutate_if(is.numeric, round, 5)
+
+
+test_results
+```
+
+
+# 14. Visual Comparison
+
+```{r}
+df_plot <- tibble(
+date = test$Date,
+actual = y_test,
+best = pred_best_test,
+lasso = pred_lasso_test,
+ridge = pred_ridge_test
+)
+
+df_plot <- na.omit(df_plot)
+plot(df_plot$date, exp(df_plot$actual), type = "l", lwd = 2, col = "black",
+ylab = "BTC Price (USD)", xlab = "Date",
+main = "Test set: Actual vs Predicted")
+lines(df_plot$date, exp(df_plot$best), col = "blue", lwd = 1.5)
+lines(df_plot$date, exp(df_plot$lasso), col = "red", lwd = 1.5)
+lines(df_plot$date, exp(df_plot$ridge), col = "green", lwd = 1.5)
+legend("topleft", legend = c("Actual", "Best-Subset", "Lasso", "Ridge"),
+col = c("black", "blue", "red", "green"), lty = 1, bty = "n")
+
+```
+
+
+# 15. Decision: 
+
+```{r decision}
+best_model_row <- test_results %>% arrange(RMSE_log) %>% slice(1)
+cat("Best model on TEST set:", best_model_row$Model, "\n")
+```
+
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
