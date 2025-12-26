@@ -1,0 +1,514 @@
+---
+title: "598_project2"
+author: "Elizabeth Binkina"
+date: "10/20/2025"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+df = read.csv("concrete_data.csv")
+head(df)
+```
+#responce variable is concrete_compressive_strength
+
+Exploratory Analysis 
+
+
+```{r}
+sum(is.na(df)) 
+```
+
+
+```{r}
+colnames(df)
+```
+
+```{r}
+str(df)
+```
+
+```{r}
+summary(df)
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(GGally)
+library(gridExtra)
+
+# Distribution of theConcrete Compressive Strength
+
+ggplot(df, aes(x = Concrete_compressive_strength)) +
+  geom_histogram(bins = 30, fill = "brown", color = "black") +
+  labs(title = "Distribution of Concrete Compressive Strength",
+       x = "Strength (MPa)", y = "Frequency")
+
+```
+
+
+
+```{r}
+# Correlation Analysis
+cor_matrix <- cor(df)
+corrplot(cor_matrix, method = "color", addCoef.col = "black",
+         tl.cex = 0.8, number.cex = 0.7, 
+         title = "Correlation Matrix of Concrete Variables", mar = c(0,0,2,0))
+
+#Which features are most correlated with Strength
+cor_strength <- sort(cor(df)[,"Concrete_compressive_strength"], decreasing = TRUE)
+cor_strength
+```
+
+
+
+```{r}
+# Relationships with Strength (Top Predictors)
+library(gridExtra)
+
+p1 <- ggplot(df, aes(x = Cement, y = Concrete_compressive_strength)) +
+  geom_point(color = "darkorange4") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Cement vs Strength")
+
+p2 <- ggplot(df, aes(x = Water, y = Concrete_compressive_strength)) +
+  geom_point(color = "brown4") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Water vs Strength")
+
+p3 <- ggplot(df, aes(x = Age, y = Concrete_compressive_strength)) +
+  geom_point(color = "darkgoldenrod1") +
+  geom_smooth(method = "lm", se = FALSE, color = "red") +
+  labs(title = "Age vs Strength")
+
+grid.arrange(p1, p2, p3, ncol = 2)
+```
+
+```{r}
+# Detecting Outliers
+numeric_vars <- df %>% select_if(is.numeric)
+boxplot(numeric_vars, main = "Boxplots for Outlier Detection", col = "darkorange", las = 2)
+
+```
+
+
+i) Polynomial Regression Model 
+
+
+```{r}
+library(caret)
+library(Metrics)
+library(dplyr)
+
+set.seed(598)
+
+
+train_idx <- createDataPartition(df$Concrete_compressive_strength, p = 0.7, list = FALSE)
+train_data <- df[train_idx, ]
+test_data <- df[-train_idx, ]
+
+concrete_lm <- lm(Concrete_compressive_strength ~ ., data = train_data)
+summary(concrete_lm)
+
+```
+
+`
+
+
+```{r}
+library(Metrics)
+library(dplyr)
+
+set.seed(598)
+predictors <- c("Cement", "blast_furnace_slag", "fly_ash", "Water","Superplasticizer", "Coarse_aggregate", "Fine_Aggreggate", "Age")
+response <- "Concrete_compressive_strength"
+
+train_idx <- createDataPartition(df[[response]], p = 0.7, list = FALSE)
+train_data <- df[train_idx, ]
+test_data <- df[-train_idx, ]
+
+k <- 10
+folds <- sample(1:k, nrow(train_data), replace=TRUE)
+max_degree <- 10
+cv_results <- data.frame(Degree=integer(), CV_RMSE=numeric(), CV_R2=numeric())
+
+for(d in 1:max_degree){
+  rmse_folds <- c()
+  r2_folds <- c()
+  
+  for(f in 1:k){
+    train_fold <- train_data[folds != f, ]
+    val_fold   <- train_data[folds == f, ]
+    
+    poly_terms <- paste0("poly(", predictors, ",", d, ", raw=FALSE)")
+    formula_poly <- as.formula(paste(response, "~", paste(poly_terms, collapse=" + ")))
+    
+    model <- lm(formula_poly, data=train_fold)
+    
+    pred <- predict(model, newdata=val_fold)
+    obs <- val_fold[[response]]
+    
+    rmse_folds <- c(rmse_folds, rmse(obs, pred))
+    ss_res <- sum((obs - pred)^2)
+    ss_tot <- sum((obs - mean(obs))^2)
+    r2_folds <- c(r2_folds, 1 - ss_res/ss_tot)
+  }
+  
+  cv_results <- rbind(cv_results, data.frame(
+    Degree=d,
+    CV_RMSE=mean(rmse_folds),
+    CV_R2=mean(r2_folds)
+  ))
+}
+
+for(i in 1:nrow(cv_results)){
+  cat(paste0("Degree: ", cv_results$Degree[i],"  | CV RMSE: ", round(cv_results$CV_RMSE[i],4),"  | CV R2: ", round(cv_results$CV_R2[i],4), "\n"))
+}
+```
+
+
+
+
+```{r}
+degree <- 5
+
+poly_terms <- paste0("poly(", predictors, ", ", degree, ", raw=FALSE)")
+formula_poly <- as.formula(paste(response, "~", paste(poly_terms, collapse=" + ")))
+
+poly_model <- lm(formula_poly, data=train_data)
+summary(poly_model)
+
+pred <- predict(poly_model, newdata=test_data)
+obs <- test_data[[response]]
+
+test_mse <- mse(obs, pred)
+test_rmse <- rmse(obs, pred)
+test_mae <- mae(obs, pred)
+
+ss_res <- sum((obs - pred)^2)
+ss_tot <- sum((obs - mean(obs))^2)
+test_r2 <- 1 - ss_res/ss_tot
+
+cat("Test MSE:", round(test_mse,4), "\n")
+cat("Test RMSE:", round(test_rmse,4), "\n")
+cat("Test MAE:", round(test_mae,4), "\n")
+cat("Test R²:", round(test_r2,4), "\n")
+```
+
+
+```{r}
+library(ggplot2)
+ggplot(data=test_data, aes(x=obs, y=pred)) +
+  geom_point(color='darkred', alpha=0.6) +
+  geom_abline(slope=1, intercept=0, color='black', linetype="dashed") +
+  labs(title=paste("Degree", degree, "Polynomial Regression: Predicted vs Actual"),
+       x="Actual Compressive Strength",
+       y="Predicted Compressive Strength") +
+  theme_minimal()
+
+```
+
+ii) Splines model 
+
+```{r}
+set.seed(598)
+library(splines)
+library(caret)
+
+train_idx <- createDataPartition(df$Concrete_compressive_strength, p = 0.7, list = FALSE)
+train_data <- df[train_idx, ]
+test_data  <- df[-train_idx, ]
+
+
+mse <- function(y, yhat) mean((y - yhat)^2)
+
+
+predictors <- setdiff(names(df), "Concrete_compressive_strength")
+
+degrees_of_freedom <- 1:10
+mse_values <- numeric(length(degrees_of_freedom))
+
+suppressWarnings({
+  for (i in seq_along(degrees_of_freedom)) {
+    d <- degrees_of_freedom[i]
+    rhs <- paste(sprintf("bs(%s, df=%d)", predictors, d), collapse = " + ")
+    fml <- as.formula(paste("Concrete_compressive_strength ~", rhs))
+    
+    spline_model <- lm(fml, data = train_data)
+    preds <- predict(spline_model, newdata = test_data)
+    mse_values[i] <- mse(test_data$Concrete_compressive_strength, preds)
+  }
+})
+
+splines_results <- data.frame(
+  Degrees_of_Freedom = degrees_of_freedom,
+  Test_MSE = round(mse_values, 4)
+)
+
+print("Spline Regression Model Comparison:")
+print(splines_results)
+
+```
+```{r}
+best_df <- splines_results$Degrees_of_Freedom[which.min(splines_results$Test_MSE)]
+best_MSE <- min(splines_results$Test_MSE)
+cat("Best degrees of freedom:", best_df, "\n")
+cat("Best Test MSE for spline model:", best_MSE, "\n")
+```
+
+
+
+
+
+```{r}
+suppressWarnings({
+  rhs_best <- paste(sprintf("ns(%s, df=%d)", predictors, best_df), collapse = " + ")
+  best_spline_formula <- as.formula(paste("Concrete_compressive_strength ~", rhs_best))
+  best_spline_fit <- lm(best_spline_formula, data = train_data)
+  spline_preds <- predict(best_spline_fit, newdata = test_data)
+})
+
+
+plot_data <- data.frame(
+  Actual = test_data$Concrete_compressive_strength,
+  Predicted = spline_preds
+)
+
+
+ggplot(plot_data, aes(x = Actual, y = Predicted)) +
+  geom_point(alpha = 0.6) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Spline Regression: Predicted vs Actual Compressive Strength",
+    subtitle = paste("Best df =", best_df, " | Test MSE =", round(best_MSE, 2)),
+    x = "Actual Strength (MPa)",
+    y = "Predicted Strength (MPa)"
+  ) +
+  theme_minimal(base_size = 13)
+
+```
+
+```{r}
+summary(best_spline_fit)
+```
+
+
+```{r}
+residuals <- test_data$Concrete_compressive_strength - spline_preds
+resid_plot_data <- data.frame(
+  Fitted = spline_preds,
+  Residuals = residuals
+)
+
+ggplot(resid_plot_data, aes(x = Fitted, y = Residuals)) +
+  geom_point(alpha = 0.6) +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(
+    title = "Spline Regression: Residuals vs Fitted Values",
+    subtitle = paste("Best df =", best_df),
+    x = "Fitted Strength (MPa)",
+    y = "Residuals"
+  ) +
+  theme_minimal(base_size = 13)
+
+```
+
+
+
+iii) Regression Tree Model 
+
+
+```{r}
+library(rpart)
+library(rpart.plot)
+
+set.seed(598)
+n <- nrow(df)
+train_idx <- sample(1:n, size= 0.7*n)
+train_data <- df[train_idx, ]
+test_data <- df[-train_idx,]
+
+df.tree <- rpart(Concrete_compressive_strength ~ . , data = train_data)
+rpart.plot(df.tree)
+```
+
+```{r}
+preds <- predict(df.tree, newdata=test_data)
+rmse <- sqrt(mean((preds - test_data$Concrete_compressive_strength)^2))
+cat("RMSE = ", rmse, "\n")
+```
+
+```{r}
+SST <- sum((test_data$Concrete_compressive_strength - mean(train_data$Concrete_compressive_strength))^2)
+SSR <- sum((preds - test_data$Concrete_compressive_strength)^2)
+R_squared <- 1 - SSR/SST
+cat("R-squared = ", R_squared, "\n")
+```
+
+```{r}
+printcp(df.tree)
+```
+
+```{r}
+plotcp(df.tree)
+```
+
+```{r}
+optimal.cp <- df.tree$cptable[which.min(df.tree$cptable[,"xerror"]), "CP"]
+df.tree.pruned <- prune(df.tree, cp = optimal.cp)
+rpart.plot(df.tree.pruned)
+```
+```{r}
+printcp(df.tree.pruned)
+```
+
+
+```{r}
+plotcp(df.tree.pruned)
+```
+
+
+```{r}
+preds_pruned <- predict(df.tree.pruned, newdata = test_data)
+rmse_pruned <- sqrt(mean((preds_pruned - test_data$Concrete_compressive_strength)^2))
+rmse_pruned
+```
+
+iv) Random Forest Model 
+
+
+```{r}
+library(randomForest)
+randomForest(formula = Concrete_compressive_strength ~ ., 
+             data = train_data, 
+             ntree = 500, 
+             mtry = floor(sqrt(ncol(train_data) - 1)), 
+             importance = TRUE)
+
+```
+
+```{r}
+library(randomForest)
+set.seed(598)
+n <- nrow(df)
+train_idx <- sample(1:n, size = 0.7*n)
+train_data <- df[train_idx,]
+test_data <- df[-train_idx, ]
+
+rf_model <- randomForest(Concrete_compressive_strength ~ .,
+                         data = train_data,
+                         ntree=500,
+                         mtry = floor(sqrt(ncol(train_data)-1)),
+                         importance = TRUE)
+print(rf_model)
+```
+
+```{r}
+rf_preds <- predict(rf_model, newdata = test_data)
+rmse_rf <- sqrt(mean((rf_preds - test_data$Concrete_compressive_strength)^2))
+cat("Random Forest RMSE = ", rmse_rf, "\n")
+```
+
+```{r}
+SST <- sum((test_data$Concrete_compressive_strength - mean(train_data$Concrete_compressive_strength))^2)
+SSR <- sum((rf_preds - test_data$Concrete_compressive_strength)^2)
+R2_rf <- 1 - SSR/SST
+cat("Random Forest R-squared = ", R2_rf, "\n")
+```
+
+```{r}
+importance(rf_model)
+```
+
+```{r}
+varImpPlot(rf_model)
+```
+
+```{r}
+
+# === Model Performance Summary (using previously fitted models) ===
+library(Metrics)
+library(ggplot2)
+
+# Ensure the same data split as used in the spline model
+set.seed(598)
+train_idx <- createDataPartition(df$Concrete_compressive_strength, p = 0.7, list = FALSE)
+train_data <- df[train_idx, ]
+test_data  <- df[-train_idx, ]
+
+# Recalculate spline predictions on this test set to match dimensions
+spline_preds <- predict(best_spline_fit, newdata = test_data)
+
+# Compute spline metrics
+spline_rmse <- sqrt(best_MSE)
+spline_r2 <- cor(test_data$Concrete_compressive_strength, spline_preds)^2
+
+# Combine all previously fitted models
+results <- data.frame(
+  Model = c("Polynomial (Degree 5)",
+            "Regression Tree (Pruned)",
+            "Spline (df = 7)",
+            "Random Forest"),
+  RMSE = round(c(test_rmse, rmse_pruned, spline_rmse, rmse_rf), 3),
+  R2   = round(c(test_r2, R_squared, spline_r2, R2_rf), 3)
+)
+
+print(results)
+
+
+```
+
+```{r}
+ggplot(results, aes(x = Model, y = RMSE, fill = Model)) +
+  geom_bar(stat = "identity", color = "black") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "RMSE Comparison Across Models",
+    y = "Test RMSE",
+    x = "Model"
+  ) +
+  theme(
+    axis.text.x = element_text(angle = 30, hjust = 1, color = "black"),
+    plot.title = element_text(face = "bold", color = "#6B2E00")
+  ) +
+  scale_fill_manual(values = c(
+    "Polynomial (Degree 5)" = "#8B0000",   
+    "Regression Tree (Pruned)" = "#006400", 
+    "Spline (df = 7)" = "#8B4513",          
+    "Random Forest" = "#CC5500"             
+  ))
+
+
+```
+
+
+
+Mathematical Formulas for Regression Models
+
+
+$$
+\hat{y} = \beta_0 + \sum_{j=1}^{p} \sum_{k=1}^{5} \beta_{jk} x_j^k + \varepsilon
+$$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
